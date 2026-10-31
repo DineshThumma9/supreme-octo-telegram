@@ -8,8 +8,9 @@ Usage:
 The first command prints the buyer approval URL and writes the order details to
 ``backend/data/paypal_proof.json``. Open the URL in a browser, log in with a
 separate PayPal sandbox *personal* buyer account, and approve the payment.
-Then run the second command with the order ID. The script never prints or stores
-the client secret or OAuth token.
+Then run the second command with the order ID. Proof records are kept per order
+under the ``orders`` key so a new proof run never erases an earlier capture.
+The script never prints or stores the client secret or OAuth token.
 """
 
 from __future__ import annotations
@@ -36,17 +37,39 @@ AMOUNT_USD = 10.00
 
 
 def _load() -> dict:
+    data: dict = {}
     if PROOF_FILE.exists():
         try:
-            return json.loads(PROOF_FILE.read_text())
+            loaded = json.loads(PROOF_FILE.read_text())
+            if isinstance(loaded, dict):
+                data = loaded
         except json.JSONDecodeError:
-            return {}
-    return {}
+            data = {}
+
+    # Migrate the original single-record format to a per-order map.
+    if "orders" not in data:
+        orders = {}
+        if data.get("order_id"):
+            orders[data["order_id"]] = data
+        data = {"orders": orders}
+    data.setdefault("orders", {})
+    return data
 
 
 def _save(data: dict) -> None:
     PROOF_FILE.parent.mkdir(parents=True, exist_ok=True)
+    data["updated_at"] = _stamp()
     PROOF_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _record(order_id: str) -> dict:
+    return _load()["orders"].get(order_id, {})
+
+
+def _store(record: dict) -> None:
+    data = _load()
+    data["orders"][record["order_id"]] = record
+    _save(data)
 
 
 def _stamp() -> str:
@@ -103,7 +126,7 @@ async def create_proof_order(allow_live: bool) -> None:
         "captured_at": None,
         "capture_status": None,
     }
-    _save(record)
+    _store(record)
 
     print("PayPal sandbox order created.")
     print(f"  Order ID : {record['order_id']}")
@@ -139,9 +162,7 @@ async def capture_proof_order(order_id: str, allow_live: bool) -> None:
             f"PayPal response: {json.dumps(capture, indent=2)}"
         )
 
-    record = _load()
-    if record.get("order_id") != order_id:
-        record = {"order_id": order_id}
+    record = _record(order_id) or {"order_id": order_id}
     record.update(
         {
             "environment": "sandbox",
@@ -154,7 +175,7 @@ async def capture_proof_order(order_id: str, allow_live: bool) -> None:
             "currency": (capture.get("amount") or {}).get("currency_code", "USD"),
         }
     )
-    _save(record)
+    _store(record)
 
     print("PayPal sandbox capture completed.")
     print(f"  Order ID  : {order_id}")

@@ -183,6 +183,8 @@ uv run python scripts/paypal_proof.py --capture <ORDER_ID>
 
 The script writes local evidence to `backend/data/paypal_proof.json` (gitignored) and refuses non-sandbox hosts unless `--allow-live` is passed. It never prints or stores the client secret or OAuth token.
 
+The return URL must point at the Renvue backend. If another app owns that port, set `BACKEND_URL` to the Renvue port and restart the backend before creating the order.
+
 Verified sandbox capture (2026-10-31): order `79239162G4187994B` → capture `52M84231CC782152A`, status `COMPLETED`, `$10.00 USD`.
 
 ## Tests
