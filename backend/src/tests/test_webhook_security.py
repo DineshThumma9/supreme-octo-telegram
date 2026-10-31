@@ -22,6 +22,7 @@ for p in [str(SRC_DIR), str(BACKEND_DIR)]:
 
 from httpx import ASGITransport, AsyncClient
 
+import router.apis as apis_router
 from config.config import settings
 from main import app
 from paypal.client import paypal_client
@@ -126,6 +127,62 @@ async def test_paypal_webhook_signature_verification():
             assert r_second.status_code == 200, r_second.text
             assert r_second.json().get("status") == "duplicate", r_second.text
             print("  Duplicate delivery: acknowledged without reprocessing")
+
+        # 7. The buyer return redirect captures an approved order and renders a
+        # result page instead of a 404. The cancel redirect renders its own page.
+        approved_order = {"id": "TEST-ORDER", "status": "APPROVED", "purchase_units": []}
+        completed_order = {
+            "id": "TEST-ORDER",
+            "status": "COMPLETED",
+            "purchase_units": [
+                {
+                    "payments": {
+                        "captures": [
+                            {
+                                "id": "CAP-TEST-1",
+                                "status": "COMPLETED",
+                                "amount": {"value": "10.00", "currency_code": "USD"},
+                            }
+                        ]
+                    }
+                }
+            ],
+        }
+        calls = {"handle": 0, "capture": 0}
+        orig_get_order = apis_router.get_order
+        orig_capture = apis_router.paypal_capture_order
+        orig_handle = apis_router.handle_paypal_event
+
+        async def fake_get_order(order_id):
+            return approved_order
+
+        async def fake_capture(order_id, request_id=None):
+            calls["capture"] += 1
+            return completed_order
+
+        async def fake_handle(event, db):
+            calls["handle"] += 1
+            return {"status": "mocked"}
+
+        apis_router.get_order = fake_get_order
+        apis_router.paypal_capture_order = fake_capture
+        apis_router.handle_paypal_event = fake_handle
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                r_return = await client.get("/api/paypal/return?token=TEST-ORDER&PayerID=TEST")
+                assert r_return.status_code == 200, r_return.text
+                assert "Payment complete" in r_return.text, r_return.text[:300]
+                assert "CAP-TEST-1" in r_return.text, r_return.text[:300]
+
+                r_cancel = await client.get("/api/paypal/cancel?token=TEST-ORDER")
+                assert r_cancel.status_code == 200, r_cancel.text
+                assert "Payment cancelled" in r_cancel.text, r_cancel.text[:300]
+            assert calls == {"handle": 1, "capture": 1}, calls
+            print("  Buyer return/cancel redirects: capture and result page OK")
+        finally:
+            apis_router.get_order = orig_get_order
+            apis_router.paypal_capture_order = orig_capture
+            apis_router.handle_paypal_event = orig_handle
 
         print(f"{GREEN}✓ PayPal webhook verification and idempotency passed!{RESET}")
     finally:

@@ -65,6 +65,7 @@ The backend talks to the PayPal REST API directly (no vendor SDK):
 - **Invoicing v2** — create and remind on recovery invoices.
 - **Disputes** — freeze dunning when a dispute is opened.
 - **Webhooks** — verify `PAYPAL-TRANSMISSION-*` headers with `POST /v1/notifications/verify-webhook-signature`, then de-duplicate on `event.id`.
+- **Buyer redirects** — `/api/paypal/return` captures approved orders and updates the matching case; `/api/paypal/cancel` confirms that no capture occurred.
 
 Handled events include `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.PENDING`, `BILLING.SUBSCRIPTION.PAYMENT.FAILED`, `INVOICING.INVOICE.PAID`, `CUSTOMER.DISPUTE.CREATED`, and related lifecycle events. Unknown events are acknowledged and ignored.
 
@@ -174,13 +175,15 @@ cd backend
 uv run python scripts/paypal_proof.py
 ```
 
-Open the printed `checkoutnow?token=...` URL with a **separate PayPal sandbox personal buyer account**, approve the payment, then capture:
+Open the printed `checkoutnow?token=...` URL with a **separate PayPal sandbox personal buyer account** and approve the payment. PayPal redirects to `/api/paypal/return`, which captures the approved order automatically. Record the capture evidence with:
 
 ```bash
 uv run python scripts/paypal_proof.py --capture <ORDER_ID>
 ```
 
 The script writes local evidence to `backend/data/paypal_proof.json` (gitignored) and refuses non-sandbox hosts unless `--allow-live` is passed. It never prints or stores the client secret or OAuth token.
+
+Verified sandbox capture (2026-10-31): order `79239162G4187994B` → capture `52M84231CC782152A`, status `COMPLETED`, `$10.00 USD`.
 
 ## Tests
 
