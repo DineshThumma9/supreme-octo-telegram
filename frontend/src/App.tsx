@@ -43,7 +43,7 @@ function buildChatFromAuditLog(caseData: Case): ChatMessage[] {
     msgs.push({
         id: `init-${caseData.case_id}`,
         sender: 'system',
-        text: `Payment failure detected: ₹${(caseData.amount_inr || 0).toLocaleString()} (${caseData.failure_reason || 'Declined'})`,
+        text: `Payment failure detected: $${(caseData.amount || 0).toLocaleString()} (${caseData.failure_reason || 'Declined'})`,
         timestamp: caseData.first_seen_at ? new Date(caseData.first_seen_at) : new Date(),
         isStatus: true,
         channel: 'system',
@@ -56,7 +56,7 @@ function buildChatFromAuditLog(caseData: Case): ChatMessage[] {
             const nextStr = log.next_contact ? ` · Next scheduled: ${new Date(log.next_contact).toLocaleDateString()}` : ''
             const text = (log.message || `Agent action: ${log.event_triggered.replace(/_/g, ' ')}`) + nextStr
             const isCust = log.direction === 'inbound' || log.event_triggered === 'customer_reply'
-            const isSys = log.direction === 'system' || ['get_next_salary_date', 'log_promise_to_pay'].includes(log.event_triggered)
+            const isSys = log.direction === 'system' || ['get_next_payday_date', 'log_promise_to_pay'].includes(log.event_triggered)
             
             msgs.push({
                 id: `log-${caseData.case_id}-${i}-${log.event_triggered}`,
@@ -137,10 +137,10 @@ export default function App() {
           else if (val === "subscription_failed") setDeclineReason("Mandate auto-debit failed")
           else if (val === "invoice_failed") setDeclineReason("Invoice overdue")
       }
-      const [amount, setAmount] = useState(5000)
-      const [name, setName] = useState("Dinesh")
+      const [amount, setAmount] = useState(480)
+      const [name, setName] = useState("Alex Morgan")
       const [email, setEmail] = useState("test@example.com")
-      const [phone, setPhone] = useState("9876543210")
+      const [phone, setPhone] = useState("+14155550123")
       const [resumeCaseId, setResumeCaseId] = useState("")
   
       // Step 2 Simulation Data
@@ -183,7 +183,7 @@ export default function App() {
                   setActiveCaseId(caseData.case_id)
                   setActiveCase(caseData)
                   setName(caseData.customer.name || name)
-                  setAmount(caseData.amount_inr || amount)
+                  setAmount(caseData.amount || amount)
                   setChatHistory(buildChatFromAuditLog(caseData))
                   setStep(2)
                   setIsPolling(true)
@@ -208,7 +208,7 @@ export default function App() {
               amount: Number(amount),
               name: name || "Dinesh",
               email: email || "test@example.com",
-              phone: phone || "9876543210",
+              phone: phone || "+14155550123",
           }
   
           try {
@@ -220,7 +220,7 @@ export default function App() {
                     {
                         id: `init-${data.id}`,
                         sender: 'system',
-                        text: `Payment failure detected: ₹${amount.toLocaleString()} (${declineReason})`,
+                        text: `Payment failure detected: $${amount.toLocaleString()} (${declineReason})`,
                         timestamp: new Date(),
                         isStatus: true
                     }
@@ -313,7 +313,7 @@ export default function App() {
     }
     const agentMsgs = chatHistory.filter(m => m.sender === 'agent')
     if (agentMsgs.length > 0) return agentMsgs[agentMsgs.length - 1].text
-    return `Hi ${name}, looks like your payment of ₹${amount.toLocaleString()} didn't go through due to a temporary bank glitch. Your order is reserved. Tap the link to retry.`
+    return `Hi ${name}, looks like your payment of $${amount.toLocaleString()} didn't go through due to a temporary PayPal issue. Your order is reserved. Tap the link to retry.`
   })()
 
   return (
@@ -399,7 +399,7 @@ export default function App() {
                       </Button>
                     </div>
 
-                    <RadioGroup value={eventType} onValueChange={handleScenarioChange} className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <RadioGroup value={eventType} onValueChange={handleScenarioChange} className="grid grid-cols-1 md:grid-cols-4 gap-3">
                       <label htmlFor="sc-soft" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
@@ -414,7 +414,7 @@ export default function App() {
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
                             <div className="text-xs font-semibold text-zinc-100">Subscription Failure</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">Mandate auto-debit failure</p>
+                            <p className="text-[11px] text-zinc-400 mt-0.5">Recurring billing failure</p>
                           </div>
                           <RadioGroupItem value="subscription_failed" id="sc-sub" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
                         </div>
@@ -424,9 +424,19 @@ export default function App() {
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
                             <div className="text-xs font-semibold text-zinc-100">Overdue Invoice</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">Payment link outreach</p>
+                            <p className="text-[11px] text-zinc-400 mt-0.5">PayPal invoice reminder</p>
                           </div>
                           <RadioGroupItem value="invoice_failed" id="sc-invoice" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
+                        </div>
+                      </label>
+
+                      <label htmlFor="sc-cart" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
+                        <div className="p-3 w-full justify-between items-center flex">
+                          <div>
+                            <div className="text-xs font-semibold text-zinc-100">Abandoned Checkout</div>
+                            <p className="text-[11px] text-zinc-400 mt-0.5">Reserved discount recovery</p>
+                          </div>
+                          <RadioGroupItem value="abandoned_checkout" id="sc-cart" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
                         </div>
                       </label>
                     </RadioGroup>
@@ -444,7 +454,7 @@ export default function App() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">Amount (₹)</Label>
+                        <Label className="text-[11px] font-medium text-zinc-400">Amount (USD)</Label>
                         <Input
                           type="number"
                           value={amount}
@@ -459,7 +469,7 @@ export default function App() {
                         <Input
                           value={phone}
                           onChange={e => setPhone(e.target.value)}
-                          placeholder="9876543210"
+                          placeholder="+14155550123"
                           className="bg-zinc-900 border-zinc-800 text-zinc-100 h-8 text-xs"
                         />
                       </div>
@@ -506,7 +516,7 @@ export default function App() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="max-w-2xl bg-[#0b3328] border border-emerald-700/40 text-emerald-50 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs shadow-sm leading-relaxed">
                         <div className="text-[10px] font-medium text-emerald-400 mb-1 flex items-center gap-1.5">
-                          <MessageSquare className="w-3 h-3" /> WhatsApp to {name} · ₹{amount.toLocaleString()}
+                          <MessageSquare className="w-3 h-3" /> WhatsApp to {name} · ${amount.toLocaleString()}
                         </div>
                         <p className="text-xs text-emerald-50 leading-relaxed whitespace-pre-wrap">
                           {latestAgentMessage}

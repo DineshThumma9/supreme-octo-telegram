@@ -60,7 +60,7 @@ export function EscalationPanel({
           >
             <div>
               <p className="text-sm font-medium text-zinc-200">
-                {c.customer.name} · <span className="text-red-400 font-semibold">₹{fmt(c.amount_inr)}</span>
+                {c.customer.name} · <span className="text-red-400 font-semibold">${fmt(c.amount)}</span>
               </p>
               <p className="text-xs text-zinc-500 mt-0.5">
                 {c.case_type.replace(/_/g, ' ')} · Escalated {relTime(c.first_seen_at)}

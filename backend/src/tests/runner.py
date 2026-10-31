@@ -4,9 +4,9 @@ Orchestrates the 6 domain-specific test suites from `tests/`:
 1. Lifecycle & Stopping Rules (tests/test_lifecycle.py)
 2. Promise-To-Pay & Grace Period Validation (tests/test_promise_to_pay.py)
 3. B2B Commercial Overdue Invoices (tests/test_b2b_invoices.py)
-4. Recurring Subscriptions & RBI Intimation (tests/test_subscriptions.py)
+4. Recurring Subscriptions & PayPal Update-Method Links (tests/test_subscriptions.py)
 5. Abandoned Checkout Concessions & Anti-Gaming (tests/test_checkout_concessions.py)
-6. Razorpay HMAC-SHA256 Webhook Security (tests/test_webhook_security.py)
+6. PayPal Webhook Signature Verification & Idempotency (tests/test_webhook_security.py)
 
 Run directly via:
     uv run python src/tests/runner.py
@@ -30,7 +30,7 @@ from tests.test_promise_to_pay import test_promise_to_pay_case
 from tests.test_b2b_invoices import test_overdue_invoice_case
 from tests.test_subscriptions import test_recurring_subscription_case
 from tests.test_checkout_concessions import test_abandoned_checkout_bell_curve_discount
-from tests.test_webhook_security import test_razorpay_webhook_signature_verification
+from tests.test_webhook_security import test_paypal_webhook_signature_verification
 
 
 async def main():
@@ -42,7 +42,7 @@ async def main():
         await test_overdue_invoice_case()
         await test_recurring_subscription_case()
         await test_abandoned_checkout_bell_curve_discount()
-        await test_razorpay_webhook_signature_verification()
+        await test_paypal_webhook_signature_verification()
         elapsed = (datetime.now() - start).total_seconds()
         print(f"\n{GREEN}{BOLD}{'='*70}{RESET}")
         print(f"{GREEN}{BOLD} ALL 6 REGRESSION SUITES PASSED CLEANLY in {elapsed:.2f}s!{RESET}")

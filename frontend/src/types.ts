@@ -23,7 +23,7 @@ export const CaseSchema = z.object({
   case_type: z.string(),
   decline_type: z.string().nullable(),
   failure_reason: z.string().nullable(),
-  amount_inr: z.number(),
+  amount: z.number(),
   recovered_amount: z.number().default(0),
   customer: CustomerSchema,
   recovery_status: z.string(),
@@ -40,9 +40,9 @@ export const CaseSchema = z.object({
 
 export const StatsSchema = z.object({
   total_cases: z.number(),
-  total_at_risk_inr: z.number(),
+  total_at_risk: z.number(),
   recovered_count: z.number(),
-  recovered_amount_inr: z.number(),
+  recovered_amount: z.number(),
   recovery_rate_pct: z.number(),
   escalated_count: z.number(),
   still_active: z.number(),

@@ -20,23 +20,34 @@ for p in [str(SRC_DIR), str(BACKEND_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.graph import get_compiled_agent
+from config.config import settings
 from config.db import AsyncSessionLocal, _init_db
 from models.models import RecoveryState
 from service.compliance import get_bell_curve_discount
 from service.states import load_state, save_state
+import agent.nodes as agent_nodes
+
+
+class _FakeLLM:
+    async def ainvoke(self, messages):
+        return AIMessage(content="Deterministic test reply.")
+
+
 from tests.common import GREEN, RESET, print_banner
 
 
 async def test_abandoned_checkout_bell_curve_discount():
     print_banner("5. Abandoned Checkout Bell-Curve Concession & Anti-Gaming")
+    settings.demo_mode = True
+    agent_nodes.get_llm = lambda: _FakeLLM()
     _init_db()
 
     # 1. Non-abandoned case policy rejection verification
-    inv_state = RecoveryState(case_id="dummy_inv", source_id="inv_1", case_type="overdue_invoice", amount_inr=10000.0)
-    sub_state = RecoveryState(case_id="dummy_sub", source_id="sub_1", case_type="failed_subscription", amount_inr=2000.0)
+    inv_state = RecoveryState(case_id="dummy_inv", source_id="INV2-1", case_type="overdue_invoice", amount=4800.0)
+    sub_state = RecoveryState(case_id="dummy_sub", source_id="I-1", case_type="failed_subscription", amount=49.0)
     assert get_bell_curve_discount(inv_state) == 0.0, "Discounts must be strictly disallowed for corporate invoices"
     assert get_bell_curve_discount(sub_state) == 0.0, "Discounts must be strictly disallowed for recurring subscriptions"
 
@@ -47,10 +58,10 @@ async def test_abandoned_checkout_bell_curve_discount():
     async with AsyncSessionLocal() as db:
         cart_case = RecoveryState(
             case_id=case_id,
-            source_id="plink_mock_cart_42",
+            source_id="ORDER-CART-42",
             case_type="abandoned_checkout",
-            amount_inr=original_amount,
-            customer={"name": "Ananya Sharma", "email": "ananya@example.com", "contact": "+919876543210"},
+            amount=original_amount,
+            customer={"name": "Taylor Reed", "email": "ananya@example.com", "contact": "+14155550123"},
             failure_reason="Checkout abandoned on shipping details step",
             error_details={},
             recovery_status="pending",
@@ -72,10 +83,10 @@ async def test_abandoned_checkout_bell_curve_discount():
     meta_t1 = t1.case_metadata or {}
     eligible = meta_t1.get("eligible_discount")
     applied = meta_t1.get("discount_pct")
-    eff_amt = meta_t1.get("effective_amount_inr")
+    eff_amt = meta_t1.get("effective_amount")
     link = meta_t1.get("payment_link")
 
-    print(f"  Attempt 1 Outreach: eligible_discount={eligible}%, applied_discount={applied}%, effective_amount=₹{eff_amt}, link={link}")
+    print(f"  Attempt 1 Outreach: eligible_discount={eligible}%, applied_discount={applied}%, effective_amount=${eff_amt}, link={link}")
     assert eligible is not None and 5.0 <= eligible <= 30.0, f"Eligible discount must be between 5-30% (got {eligible})"
     assert applied == eligible, f"Applied discount ({applied}%) must match locked eligible discount ({eligible}%)"
     assert applied is not None and eff_amt is not None

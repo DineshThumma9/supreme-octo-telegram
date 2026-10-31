@@ -4,9 +4,9 @@ import type { Case, Stats } from "../types"
 
 export const DEFAULT_STATS: Stats = {
   total_cases: 0,
-  total_at_risk_inr: 0,
+  total_at_risk: 0,
   recovered_count: 0,
-  recovered_amount_inr: 0,
+  recovered_amount: 0,
   recovery_rate_pct: 0,
   escalated_count: 0,
   still_active: 0,

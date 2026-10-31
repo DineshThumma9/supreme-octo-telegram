@@ -35,7 +35,7 @@ def get_compiled_agent():
         # 1. Pre-Flight Compliance Guardrail runs FIRST on every turn
         workflow.add_edge(START, "compliance_guardrail")
 
-        # 2. Route based on compliance validation (TRAI window, active session, case type)
+        # 2. Route based on compliance validation (contact window, active session, case type)
         workflow.add_conditional_edges(
             "compliance_guardrail",
             route_after_compliance,

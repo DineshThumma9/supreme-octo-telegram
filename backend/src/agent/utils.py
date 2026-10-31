@@ -1,39 +1,39 @@
 import asyncio
-from datetime import datetime, timedelta, date
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from langchain_core.messages import SystemMessage
 from langchain_mistralai import ChatMistralAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.prompts import get_escalation_tone, should_send_channel
 from config.clients import (
-    create_rzp_mandate_update_link,
-    create_rzp_payment_link,
+    create_paypal_invoice_link,
+    create_paypal_mandate_update_link,
+    create_paypal_payment_link,
     generate_and_send_voice_note,
     get_redis_client,
     send_resend_email,
     send_twilio_whatsapp,
 )
 from config.config import settings
-from config.constants import hard_declines
 from config.db import AsyncSessionLocal
 from config.logger import get_logger
 from models.models import RecoveryState
 from models.schema import AuditEntry
+from policy.baseline import eligible_plays, observation_from_state, policy
+from policy.guardrails import apply_guardrails
+from policy.interfaces import Action, Play
 from service.broadcast import broadcast_case_update
 from service.compliance import (
-    adjust_for_trai_window,
+    adjust_for_contact_window,
     build_whatsapp_payload,
-    calculate_rbi_pre_debit_schedule,
-    format_rbi_pre_debit_intimation,
     get_bell_curve_discount,
-    is_recurring_mandate_case,
+    is_subscription_case,
 )
+from service.decisions import log_action, log_decision, log_outcome
+from service.money import format_money, format_state_amount
 from service.states import save_state
-from agent.prompts import (
-    get_escalation_tone,
-    should_send_channel,
-)
 
 logger = get_logger(__name__)
 
@@ -42,28 +42,22 @@ _llm_with_tools = None
 
 
 def get_llm(tools=None):
-    """
-    Returns the singleton ChatMistralAI instance bound with agent tools.
-    Preserves connection pooling and tool bindings across conversation turns.
-    """
+    """Return the singleton tool-bound ChatMistralAI instance."""
     global _llm_instance, _llm_with_tools
     if _llm_with_tools is None:
         if tools is None:
             from agent.tools import tools as agent_tools
+
             tools = agent_tools
-        _llm_instance = ChatMistralAI(model=settings.model, temperature=0, max_retries=2, timeout=25)
+        _llm_instance = ChatMistralAI(
+            model=settings.model, temperature=0, max_retries=2, timeout=25
+        )
         _llm_with_tools = _llm_instance.bind_tools(tools)
     return _llm_with_tools
 
 
 def get_next_follow_up_time(state: RecoveryState) -> Optional[datetime]:
-    """
-    Computes progressive next retry milestone moving FORWARD in time:
-    - Attempt >= 3: None (escalated to human operations, stopping rule)
-    - Milestone is 3 days forward per attempt milestone (Attempt 1: +3d, Attempt 2: +6d, Attempt 3: +9d),
-      snapped to business hours (10:00 AM) and verified against TRAI 9 AM - 9 PM window.
-    - For recurring subscriptions, calculates RBI 24-hour pre-debit intimation schedule.
-    """
+    """Progressive follow-up milestone, snapped to the outreach window."""
     attempt = getattr(state, "attempt_count", 0)
     if attempt >= 3:
         return None
@@ -71,22 +65,7 @@ def get_next_follow_up_time(state: RecoveryState) -> Optional[datetime]:
     now = datetime.now()
     base_dt = state.next_retry_at if state.next_retry_at and state.next_retry_at > now else now
     target = (base_dt + timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0)
-    target = adjust_for_trai_window(target)
-
-    # RBI Section 10(2) PSS Act: Pre-Debit Intimation for recurring mandate cases (#14)
-    if is_recurring_mandate_case(state):
-        if state.case_metadata is None:
-            state.case_metadata = {}
-        pre_debit_dt = calculate_rbi_pre_debit_schedule(state, target)
-        state.case_metadata["rbi_pre_debit_compliance"] = {
-            "pss_act_section": "10(2)",
-            "mandate_pre_debit_required": True,
-            "scheduled_debit_at": target.isoformat(),
-            "pre_debit_intimation_at": pre_debit_dt.isoformat() if pre_debit_dt else None,
-            "compliance_verified": True,
-        }
-
-    return target
+    return adjust_for_contact_window(target)
 
 
 async def _schedule_task(state: RecoveryState, target_date: datetime, db: AsyncSession):
@@ -99,22 +78,31 @@ async def _schedule_task(state: RecoveryState, target_date: datetime, db: AsyncS
     if target_date <= now:
         target_date = now + timedelta(minutes=1)
 
-    logger.info(f"  [SCHEDULE] case={state.case_id} next_retry_at={target_date.isoformat()}")
+    logger.info("  [SCHEDULE] case=%s next_retry_at=%s", state.case_id, target_date.isoformat())
 
-    # Ensure schedule_source is connected
-    if schedule_source._connection_pool is None:
-        await schedule_source.startup()
+    try:
+        if schedule_source._connection_pool is None:
+            await schedule_source.startup()
 
-    created = await invoke_agent_task.kicker().schedule_by_time(
-        schedule_source,
-        target_date,
-        state.case_id,
-    )
-    # Store native Taskiq schedule ID so cancellation works cleanly
-    state.active_task_id = created.schedule_id
+        created = await invoke_agent_task.kicker().schedule_by_time(
+            schedule_source,
+            target_date,
+            state.case_id,
+        )
+        state.active_task_id = created.schedule_id
+    except Exception as exc:
+        # Local tests and demos may run without Redis. Persist the due time so
+        # the UI and reconciliation loop still see the schedule.
+        logger.warning("[SCHEDULE] Taskiq unavailable (%s); persisting next_retry_at only.", exc)
+        state.active_task_id = None
+
     state.next_retry_at = target_date
     await save_state(state, db)
-    logger.info(f"  [SCHEDULE] saved in Redis with schedule_id={created.schedule_id} — next_retry_at={state.next_retry_at}")
+    logger.info(
+        "  [SCHEDULE] saved next_retry_at=%s (task=%s)",
+        state.next_retry_at,
+        state.active_task_id,
+    )
 
 
 async def _log_audit(
@@ -130,7 +118,7 @@ async def _log_audit(
 ):
     entry = AuditEntry(
         event_triggered=tool_name,
-        amount=str(state.amount_inr),
+        amount=format_state_amount(state),
         recovery_status=state.recovery_status,
         customer=state.customer,
         next_contact=next_retry_at,
@@ -142,58 +130,53 @@ async def _log_audit(
         created_at=datetime.now(),
     )
     state.audit_log.append(entry.model_dump(mode="json"))
-    logger.info(f"  [LOG_AUDIT] tool={tool_name} next_retry_at_param={next_retry_at} message={message}")
+    logger.info(
+        "  [LOG_AUDIT] tool=%s next_retry_at_param=%s message=%s",
+        tool_name,
+        next_retry_at,
+        message,
+    )
     if tool_name in ["escalate_to_human", "complete_case"]:
         state.next_retry_at = None
-    if tool_name in ["send_whatsapp_msg", "send_email_reminder", "get_voice_call", "escalate_to_human"]:
+    if tool_name in [
+        "send_whatsapp_msg",
+        "send_email_reminder",
+        "get_voice_call",
+        "escalate_to_human",
+    ] or tool_name.startswith("play_"):
         state.last_action_taken = tool_name
     await save_state(state, db)
-    logger.info(f"  [LOG_AUDIT] save_state done for case={state.case_id}")
+    logger.info("  [LOG_AUDIT] save_state done for case=%s", state.case_id)
 
 
 async def _generate_link_for_state(
-    state: RecoveryState, customer_name: str, customer_email: str, contact_number: str, amount_inr: float
+    state: RecoveryState,
+    customer_name: str,
+    customer_email: str,
+    contact_number: str,
+    amount: float,
 ) -> tuple[str, str, bool]:
-    """
-    Differentiates between one-time cart/invoice recovery and recurring subscription recovery.
-    Returns (short_url, link_type, is_subscription).
-    """
-    sub_id = (state.case_metadata or {}).get("subscription_id")
-    if not sub_id and state.source_id and "sub_" in str(state.source_id):
-        sub_id = state.source_id
-
-    is_subscription = (
-        state.case_type in ["failed_subscription", "subscription_cancelled", "subscription"]
-        or bool(sub_id)
+    """Return (url, link_type, is_subscription) for the case's PayPal rail."""
+    if is_subscription_case(state):
+        link = await create_paypal_mandate_update_link(state)
+        return link, "update_method_link", True
+    if state.case_type == "overdue_invoice":
+        link = await create_paypal_invoice_link(state, amount=amount, currency=state.currency)
+        return link, "paypal_invoice", False
+    link = await create_paypal_payment_link(
+        state, amount=amount, currency=state.currency
     )
-
-    if is_subscription:
-        short_url = await create_rzp_mandate_update_link(
-            sub_id or f"sub_{state.case_id[-8:]}",
-            customer_name,
-            customer_email,
-            contact_number,
-            amount_inr,
-        )
-        return short_url, "mandate_reauthorization", True
-    else:
-        short_url = await create_rzp_payment_link(
-            customer_name, customer_email, contact_number, amount_inr
-        )
-        return short_url, "one_time_payment", False
+    return link, "one_time_payment", False
 
 
-async def ensure_payment_link(state: RecoveryState, db: AsyncSession, discount_pct: float = 0.0) -> tuple[str, str, bool]:
-    """
-    Consolidated helper: checks state.case_metadata for existing payment_link.
-    If missing, generates it via _generate_link_for_state, updates state.case_metadata,
-    and commits to db.
-    Returns (payment_link, link_type, is_subscription).
-    """
+async def ensure_payment_link(
+    state: RecoveryState, db: AsyncSession, discount_pct: float = 0.0
+) -> tuple[str, str, bool]:
+    """Hydrate or reuse the case's PayPal payment / invoice / method link."""
     meta = state.case_metadata or {}
     payment_link = meta.get("payment_link")
     link_type = meta.get("link_type", "one_time_payment")
-    is_sub = bool(meta.get("mandate_update"))
+    is_sub = bool(meta.get("update_method")) or is_subscription_case(state)
 
     if payment_link and (discount_pct <= 0.0 or meta.get("discount_pct") == discount_pct):
         return payment_link, link_type, is_sub
@@ -201,37 +184,35 @@ async def ensure_payment_link(state: RecoveryState, db: AsyncSession, discount_p
     customer_name = state.customer.get("name", "Customer")
     customer_email = state.customer.get("email", "")
     customer_contact = state.customer.get("contact", "")
-    base_amount = state.amount_inr
+    base_amount = float(state.amount or 0.0)
 
-    # Margin-Safe Bell-Curve Discount Policy & Anti-Gaming
     if state.case_type == "abandoned_checkout":
         eligible = get_bell_curve_discount(state)
         discount_pct = eligible if discount_pct <= 0.0 else min(discount_pct, eligible)
-        amount_inr = round(base_amount * (1.0 - (discount_pct / 100.0)), 2)
+        amount = round(base_amount * (1.0 - (discount_pct / 100.0)), 2)
     else:
         discount_pct = 0.0
-        amount_inr = base_amount
+        amount = base_amount
 
     try:
         payment_link, link_type, is_sub = await _generate_link_for_state(
-            state, customer_name, customer_email, customer_contact, amount_inr
+            state, customer_name, customer_email, customer_contact, amount
         )
         if state.case_metadata is None:
             state.case_metadata = {}
         state.case_metadata["payment_link"] = payment_link
         state.case_metadata["link_type"] = link_type
         if is_sub:
-            state.case_metadata["mandate_update"] = True
-            state.case_metadata["sub_card_change"] = True
+            state.case_metadata["update_method"] = True
         if discount_pct > 0:
             state.case_metadata["discount_pct"] = discount_pct
             state.case_metadata["eligible_discount"] = discount_pct
-            state.case_metadata["effective_amount_inr"] = amount_inr
+            state.case_metadata["effective_amount"] = amount
         await save_state(state, db)
-    except Exception as e:
+    except Exception as exc:
         ref_code = state.case_id[-4:].upper() if len(state.case_id) >= 4 else state.case_id
-        logger.critical(f"No generated a link just faking it due to :{e}")
-        payment_link = f"https://rzp.io/l/inv-{ref_code.lower()}"
+        logger.critical("Could not generate PayPal link, using mock fallback: %s", exc)
+        payment_link = f"https://www.sandbox.paypal.com/checkoutnow?token=MOCK-{ref_code}"
         link_type = "one_time_payment"
         is_sub = False
 
@@ -239,14 +220,7 @@ async def ensure_payment_link(state: RecoveryState, db: AsyncSession, discount_p
 
 
 def sanity_date(d: datetime | None, anchor_date: date | datetime | None = None) -> tuple[bool, str]:
-    """
-    Validates that promise-to-pay date is:
-    1. Not None
-    2. Today or in the future (no past dates)
-    3. Within max_grace_period days (default 7 days) from today
-    4. Within max_grace_period days cumulative from the initial incident/failure anchor date
-       (prevents chained promise exploitation where customers push out dates indefinitely).
-    """
+    """Validate a promise-to-pay date against the grace policy."""
     if not d:
         return False, "Promise date could not be parsed or was not provided"
     if d.tzinfo is not None:
@@ -256,56 +230,52 @@ def sanity_date(d: datetime | None, anchor_date: date | datetime | None = None) 
     target_date = d.date()
 
     if target_date < today:
-        return False, f"Date {target_date.strftime('%Y-%m-%d')} is in the past (today is {today.strftime('%Y-%m-%d')})"
+        return False, (
+            f"Date {target_date.strftime('%Y-%m-%d')} is in the past "
+            f"(today is {today.strftime('%Y-%m-%d')})"
+        )
 
-    # Check cumulative grace period from initial incident date
     if anchor_date is not None:
         incident_date = anchor_date.date() if isinstance(anchor_date, datetime) else anchor_date
         max_cumulative_allowed = incident_date + timedelta(days=settings.max_grace_period)
         if target_date > max_cumulative_allowed:
             total_days = (target_date - incident_date).days
             return False, (
-                f"Date {target_date.strftime('%Y-%m-%d')} is {total_days} days after the initial failure incident "
-                f"({incident_date.strftime('%Y-%m-%d')}), which exceeds the cumulative policy grace period limit of "
-                f"{settings.max_grace_period} days"
+                f"Date {target_date.strftime('%Y-%m-%d')} is {total_days} days after the initial "
+                f"failure incident ({incident_date.strftime('%Y-%m-%d')}), which exceeds the "
+                f"cumulative policy grace period limit of {settings.max_grace_period} days"
             )
 
     max_allowed = today + timedelta(days=settings.max_grace_period)
     if target_date > max_allowed:
         days_out = (target_date - today).days
-        return False, f"Date {target_date.strftime('%Y-%m-%d')} is {days_out} days in the future, exceeding the maximum policy grace period of {settings.max_grace_period} days"
+        return False, (
+            f"Date {target_date.strftime('%Y-%m-%d')} is {days_out} days in the future, "
+            f"exceeding the maximum policy grace period of {settings.max_grace_period} days"
+        )
 
     return True, "Valid"
 
 
 def cant_resolve(rs: RecoveryState) -> tuple[bool, str]:
-    """
-    Checks if a case is fundamentally unrecoverable due to hard declines, fraud, or internal errors.
-    """
+    """Return True only for genuinely terminal failure reasons."""
     details = rs.error_details or {}
-    source = details.get("error_source")
-    reason = details.get("error_reason")
-    desc = details.get("error_description", "")
+    text = " ".join(
+        str(details.get(key) or "")
+        for key in ("issue", "reason", "description", "error_description")
+    ).lower()
 
-    unresolvable_reasons = ['fraud_suspected', 'card_lost_or_stolen', 'account_frozen', 'account_closed']
-
-    if source == "internal":
-        return True, "There is a temporary issue with our payment gateway. Please try again later."
-
-    if reason in unresolvable_reasons:
-        return True, "Your payment was blocked by your bank for security reasons. Please try a different payment method or contact your bank."
-
-    if rs.method == "card" and desc in hard_declines.values():
-        return True, f"Your card payment failed because: {desc}. Please try using a different payment method like UPI."
-
+    terminal_markers = ("fraud", "stolen", "account_closed", "buyer_cannot_pay", "restricted")
+    if any(marker in text for marker in terminal_markers):
+        return True, (
+            "PayPal blocked this payment for a security or account reason. "
+            "The customer needs to use a different payment method or contact PayPal."
+        )
     return False, ""
 
 
 async def mark_case_escalated(rs: RecoveryState, reason: str, db: AsyncSession | None = None):
-    """
-    Persists escalation status to DB, cancels pending background tasks,
-    logs the audit trail, and broadcasts an SSE update to the dashboard.
-    """
+    """Persist escalation, cancel pending work, log, and broadcast."""
     rs.recovery_status = "escalated"
     rs.last_action_taken = "escalate_to_human"
     rs.next_retry_at = None
@@ -316,10 +286,11 @@ async def mark_case_escalated(rs: RecoveryState, reason: str, db: AsyncSession |
         if getattr(rs, "active_task_id", None):
             try:
                 from background.worker import revoke_active_task
+
                 await revoke_active_task(rs.active_task_id)
                 rs.active_task_id = None
-            except Exception as e:
-                logger.warning(f"[HIL] Could not revoke task: {e}")
+            except Exception as exc:
+                logger.warning("[HIL] Could not revoke task: %s", exc)
 
         await _log_audit(
             rs,
@@ -330,6 +301,12 @@ async def mark_case_escalated(rs: RecoveryState, reason: str, db: AsyncSession |
             channel="system",
             direction="internal",
         )
+        try:
+            await log_outcome(
+                session, rs, outcome_type="escalated", censored=True, dispute=bool(rs.dispute_id)
+            )
+        except Exception as exc:
+            logger.debug("[OUTCOME] Could not append escalation outcome: %s", exc)
         await save_state(rs, session)
 
     if db is not None:
@@ -340,116 +317,148 @@ async def mark_case_escalated(rs: RecoveryState, reason: str, db: AsyncSession |
 
     try:
         await broadcast_case_update(rs)
-    except Exception as e:
-        logger.warning(f"[HIL] Could not broadcast escalation: {e}")
+    except Exception as exc:
+        logger.warning("[HIL] Could not broadcast escalation: %s", exc)
+
+
+def _play_channel(play: Play) -> str:
+    return {
+        Play.EMAIL_LINK: "email",
+        Play.SMS_LINK: "whatsapp",
+        Play.PAYPAL_INVOICE_REMINDER: "email",
+        Play.RETRY_NOW: "link",
+        Play.RETRY_PAYDAY: "link",
+        Play.UPDATE_METHOD_LINK: "link",
+        Play.DISCOUNT_LINK: "link",
+        Play.HUMAN_ESCALATION: "system",
+        Play.NO_CONTACT: "system",
+    }.get(play, "system")
 
 
 async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -> RecoveryState:
-    """
-    6-Stage Deterministic Recovery Engine (Architecture Blueprint #9).
-    Executes automated webhook ingestion, downtime circuit-breaking, compliance boundaries,
-    link hydration, multi-channel dispatch, and progressive scheduling directly in Python (<10ms),
-    eliminating artificial AIMessage tool-node wrappers and DB-reload state desync.
-    """
-    ref_code = rs.case_id[-4:].upper() if len(rs.case_id) >= 4 else rs.case_id
-    target_method = rs.method
-    through = rs.through
-
-    # Stage 0: Terminal State Guard
+    """Policy proposes, guardrails dispose, the executor runs exactly one Play."""
     if rs.recovery_status in ["recovered", "closed", "escalated"]:
-        logger.info(f"[ROUTER] Case {rs.case_id} is in terminal status ({rs.recovery_status}). Aborting automated dunning.")
-        return rs
-
-    # Stage 1: Diagnose & Triage (Fast-Path)
-    # 1.1 Stopping Rules: Max 3 Attempts Hard Limit (Auto-Escalate to Human)
-    if (rs.attempt_count or 0) >= 3 and event_source != "inbound.human_approval":
-        rs.attempt_count = min(3, rs.attempt_count or 0)
-        context_str = f"Context: Name={rs.customer.get('name', 'Unknown')}, Amount=₹{rs.amount_inr:,.0f}, Case={rs.case_type}, Last Action={rs.last_action_taken}"
-        reason = f"Max attempts (3) reached. {context_str}"
-        logger.info(f"[STOPPING RULE] Case {rs.case_id} reached attempt 3 >= 3. Auto-escalating to human operations.")
-        await mark_case_escalated(rs, reason)
-        return rs
-
-    # 1.2 Customer Disputes: Immediate Human Transfer
-    if rs.case_type == "dispute":
-        reason = "Customer raised a dispute"
-        await mark_case_escalated(rs, reason)
-        return rs
-
-    # 1.3 Gateway Downtime Circuit Breaker
-    redis = get_redis_client()
-    if target_method and await redis.sismember("downtimes:method", target_method):
-        is_down = (
-            await redis.exists(f"downtimes:{target_method}:all")
-            or (through and await redis.exists(f"downtimes:{target_method}:{through}"))
-            or (through and await redis.exists(f"downtimes:{target_method}:{through.upper()}"))
+        logger.info(
+            "[ROUTER] Case %s is terminal (%s). Aborting automated dunning.",
+            rs.case_id,
+            rs.recovery_status,
         )
-        if is_down:
-            customer_name = rs.customer.get("name", "Customer")
-            bank_name = (through or target_method).upper()
-            downtime_msg = (
-                f"Hi {customer_name}, we noticed {bank_name} servers are temporarily experiencing gateway downtime. "
-                f"We have paused your payment deadline. We'll update you as soon as your bank resolves this. (Ref: #RNV-{ref_code})"
+        return rs
+
+    obs = observation_from_state(rs)
+    proposed = policy.act(obs)
+    guard = apply_guardrails(rs, obs, proposed)
+    approved = guard.action
+    decision_id = None
+
+    async with AsyncSessionLocal() as db:
+        try:
+            decision_id = await log_decision(
+                db,
+                rs,
+                obs,
+                proposed,
+                approved,
+                guard.result,
+                eligible_plays(obs),
             )
-            target_retry = adjust_for_trai_window(datetime.now() + timedelta(hours=2))
-            async with AsyncSessionLocal() as db:
-                if should_send_channel(rs, "whatsapp"):
-                    wa_payload = build_whatsapp_payload(rs, downtime_msg)
-                    await send_twilio_whatsapp(rs.customer.get("contact", ""), wa_payload["body"])
-                    await _log_audit(
-                        rs,
-                        "send_whatsapp_msg",
-                        target_retry,
-                        db,
-                        message=wa_payload["body"],
-                        channel="whatsapp",
-                        direction="outbound",
-                        meta_compliance=wa_payload.get("meta_compliance"),
-                        hsm_template=wa_payload.get("template_name"),
-                    )
-                await _schedule_task(rs, target_retry, db)
-                await _log_audit(
-                    rs,
-                    "gateway_downtime_pause",
-                    target_retry,
-                    db,
-                    message=f"Circuit breaker active: {bank_name} downtime. Retrying at {target_retry.isoformat()}",
-                    channel="system",
-                    direction="system",
-                )
-                await save_state(rs, db)
-            rs.next_retry_at = target_retry
-            rs.last_action_taken = "gateway_downtime_pause"
+        except Exception as exc:
+            logger.warning("[DECISION] Could not persist decision log: %s", exc)
+
+        if guard.result == "defer":
+            target = approved.scheduled_for or adjust_for_contact_window(datetime.now() + timedelta(hours=1))
+            rs.next_retry_at = target
+            await _schedule_task(rs, target, db)
+            await _log_audit(
+                rs,
+                "contact_window_deferred",
+                target,
+                db,
+                message=(
+                    f"Outreach deferred to the permitted contact window "
+                    f"({target.strftime('%d %b %I:%M %p')})."
+                ),
+                channel="system",
+                direction="system",
+            )
+            await log_action(
+                db, rs, decision_id, approved, "system", status="scheduled"
+            )
+            rs.last_action_taken = "contact_window_deferred"
+            await save_state(rs, db)
             await broadcast_case_update(rs)
             return rs
 
-    # 1.2 Unresolvable / Hard Decline Immediate Escalation
-    can_t, decline_reason = cant_resolve(rs)
-    if can_t:
-        await mark_case_escalated(rs, f"Hard decline / unresolvable: {decline_reason}")
-        return rs
+        if approved.play == Play.NO_CONTACT:
+            await log_action(db, rs, decision_id, approved, "system", status="skipped")
+            rs.last_action_taken = "no_contact"
+            await save_state(rs, db)
+            await broadcast_case_update(rs)
+            return rs
 
-    # Stage 2: Link Hydration
-    async with AsyncSessionLocal() as db:
-        payment_link, link_type, is_sub = await ensure_payment_link(rs, db)
+        if approved.play == Play.HUMAN_ESCALATION:
+            reason = f"Policy selected human escalation ({guard.rule})"
+            await log_action(db, rs, decision_id, approved, "system", status="executed")
+            await mark_case_escalated(rs, reason, db=db)
+            return rs
 
-        # Stage 3: Escalation Tone Matrix & Template Formatting
+        # Terminal hard-decline safeguard remains deterministic.
+        unresolvable, decline_reason = cant_resolve(rs)
+        if unresolvable:
+            await log_action(db, rs, decision_id, approved, "system", status="blocked")
+            await mark_case_escalated(rs, f"Unresolvable decline: {decline_reason}", db=db)
+            return rs
+
+        payment_link, link_type, is_sub = await ensure_payment_link(
+            rs, db, discount_pct=approved.discount_pct
+        )
+
         current_attempt = min(3, (rs.attempt_count or 0) + 1)
         wa_text, email_urgency, voice_text = get_escalation_tone(rs, attempt=current_attempt)
-        if payment_link and "{payment_link}" in wa_text:
+        if payment_link:
             wa_text = wa_text.replace("{payment_link}", payment_link)
-        if payment_link and "{payment_link}" in voice_text:
             voice_text = voice_text.replace("{payment_link}", payment_link)
 
-        # Meta HSM Utility Template Compliance (#15)
         whatsapp_payload = build_whatsapp_payload(rs, wa_text, payment_link=payment_link)
         final_wa_body = whatsapp_payload["body"]
-
-        # Stage 4: Multi-Channel Parallel / Sequential Dispatch
         dispatched_channel = None
 
-        if should_send_channel(rs, "whatsapp") and rs.customer.get("contact"):
-            sid = await send_twilio_whatsapp(rs.customer["contact"], final_wa_body)
+        async def send_email() -> bool:
+            nonlocal dispatched_channel
+            if not rs.customer.get("email"):
+                return False
+            email_amount = (rs.case_metadata or {}).get("effective_amount", rs.amount)
+            ok = await send_resend_email(
+                email_urgency,
+                rs.customer.get("name", "Customer"),
+                rs.customer["email"],
+                email_amount,
+                extra_context={
+                    "invoice_number": (rs.case_metadata or {}).get(
+                        "invoice_number", f"INV-{rs.case_id[-4:].upper()}"
+                    ),
+                    "link": payment_link,
+                },
+                currency=rs.currency or "USD",
+            )
+            if ok:
+                await _log_audit(
+                    rs,
+                    "send_email_reminder",
+                    None,
+                    db,
+                    message=f"Sent {email_urgency} recovery email with PayPal link {payment_link}",
+                    channel="email",
+                    direction="outbound",
+                )
+                dispatched_channel = "send_email_reminder"
+            return ok
+
+        async def send_whatsapp() -> bool:
+            nonlocal dispatched_channel
+            if not rs.customer.get("contact"):
+                return False
+            await send_twilio_whatsapp(rs.customer["contact"], final_wa_body)
             await _log_audit(
                 rs,
                 "send_whatsapp_msg",
@@ -462,76 +471,72 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                 hsm_template=whatsapp_payload.get("template_name"),
             )
             dispatched_channel = "send_whatsapp_msg"
+            return True
 
-        # Attempt 2 or 3: Voice dispatch if preferred or escalation warrants
-        if should_send_channel(rs, "voice") and rs.customer.get("contact") and rs.attempt_count >= 1:
-            voice_sid = await generate_and_send_voice_note(rs.customer["contact"], voice_text)
-            await _log_audit(
-                rs,
-                "get_voice_call",
-                None,
-                db,
-                message=f"Voice note dispatched: {voice_text}",
-                channel="voice",
-                direction="outbound",
-            )
-            dispatched_channel = dispatched_channel or "get_voice_call"
+        if approved.play == Play.EMAIL_LINK:
+            if not await send_email():
+                await send_whatsapp()
+        elif approved.play == Play.SMS_LINK:
+            if not await send_whatsapp():
+                await send_email()
+        elif approved.play == Play.PAYPAL_INVOICE_REMINDER:
+            await send_email()
+            if rs.invoice_id:
+                try:
+                    from paypal.invoicing import remind_invoice
 
-        # Attempt 0 or 2: Email backup
-        if should_send_channel(rs, "email") and rs.customer.get("email"):
-            email_amount = (rs.case_metadata or {}).get("effective_amount_inr", rs.amount_inr)
-            email_ok = await send_resend_email(
-                email_urgency,
-                rs.customer.get("name", "Customer"),
-                rs.customer["email"],
-                email_amount,
-                extra_context={
-                    "invoice_number": f"INV-{ref_code}",
-                    "link": payment_link,
-                },
-            )
-            if email_ok:
+                    await remind_invoice(rs, rs.invoice_id)
+                except Exception as exc:
+                    logger.warning("[PAYPAL] Invoice reminder failed: %s", exc)
+        elif approved.play == Play.UPDATE_METHOD_LINK:
+            if not await send_email():
+                await send_whatsapp()
+            if not dispatched_channel:
+                await send_whatsapp()
+        elif approved.play == Play.DISCOUNT_LINK:
+            if not await send_email():
+                await send_whatsapp()
+            if not dispatched_channel:
+                await send_whatsapp()
+        else:  # RETRY_NOW / RETRY_PAYDAY: multi-channel retry
+            if should_send_channel(rs, "whatsapp") and rs.customer.get("contact"):
+                await send_whatsapp()
+            if should_send_channel(rs, "email") and rs.customer.get("email"):
+                await send_email()
+            if (
+                should_send_channel(rs, "voice")
+                and rs.customer.get("contact")
+                and (rs.attempt_count or 0) >= 1
+            ):
+                await generate_and_send_voice_note(rs.customer["contact"], voice_text)
                 await _log_audit(
                     rs,
-                    "send_email_reminder",
+                    "get_voice_call",
                     None,
                     db,
-                    message=f"Sent {email_urgency} recovery email with secure link {payment_link}",
-                    channel="email",
+                    message=f"Voice note dispatched: {voice_text}",
+                    channel="voice",
                     direction="outbound",
                 )
-                dispatched_channel = dispatched_channel or "send_email_reminder"
+                dispatched_channel = dispatched_channel or "get_voice_call"
 
-        # Stage 5: Regulatory Compliance & Next Milestone Scheduling
-        # 5.1 Recurring Subscription: RBI 24-hour Pre-Debit Intimation
-        if is_recurring_mandate_case(rs):
-            target_retry_dt = adjust_for_trai_window(datetime.now() + timedelta(days=3))
-            pre_debit_dt = calculate_rbi_pre_debit_schedule(rs, target_retry_dt)
-            intimation_text = format_rbi_pre_debit_intimation(rs, target_retry_dt)
-            if pre_debit_dt:
-                await _log_audit(
-                    rs,
-                    "rbi_pre_debit_intimation",
-                    pre_debit_dt,
-                    db,
-                    message=f"[RBI Section 10(2) PSS Act] Scheduled pre-debit intimation notice at {pre_debit_dt.isoformat()}: {intimation_text}",
-                    channel="system",
-                    direction="internal",
-                )
+        if not dispatched_channel:
+            # The link is still a real recovery action even if the customer has
+            # no usable channel; keep it in metadata and record the Play.
+            dispatched_channel = f"play_{approved.play.value}"
 
-        # Stage 6: Update attempt count & last_action_taken
         rs.attempt_count = min(3, (rs.attempt_count or 0) + 1)
-        if dispatched_channel:
-            rs.last_action_taken = dispatched_channel
-        elif not rs.last_action_taken:
-            rs.last_action_taken = "create_payment_link"
+        rs.last_action_taken = f"play_{approved.play.value}"
 
-        # Compute next follow-up milestone (TRAI & RBI pre-debit compliant)
         if rs.attempt_count >= 3:
-            # All 3 outreach attempts have now been dispatched (Attempt 1, 2, and Final Notice).
-            # Schedule the final grace deadline. If unpaid when triggered, it auto-escalates.
-            base_dt = rs.next_retry_at if rs.next_retry_at and rs.next_retry_at > datetime.now() else datetime.now()
-            final_grace = adjust_for_trai_window((base_dt + timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0))
+            base_dt = (
+                rs.next_retry_at
+                if rs.next_retry_at and rs.next_retry_at > datetime.now()
+                else datetime.now()
+            )
+            final_grace = adjust_for_contact_window(
+                (base_dt + timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0)
+            )
             await _schedule_task(rs, final_grace, db)
             rs.next_retry_at = final_grace
         else:
@@ -541,6 +546,14 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
             else:
                 rs.next_retry_at = None
 
+        await log_action(
+            db,
+            rs,
+            decision_id,
+            approved,
+            _play_channel(approved.play),
+            provider_ref=payment_link,
+        )
         await save_state(rs, db)
 
     await broadcast_case_update(rs)

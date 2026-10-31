@@ -1,81 +1,94 @@
 import json
-from fastapi import APIRouter, Request, Form, BackgroundTasks, HTTPException, Header
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
+
 from config.db import AsyncSessionLocal
-from config.config import settings
-from config.clients import razorpay_client
 from config.logger import get_logger
-from razorpay.errors import SignatureVerificationError
-from service.service import handle_payment_event, handle_inbound_email, handle_inbound_whatsapp
+from models.models import WebhookEvent
+from paypal.webhooks import verify_webhook
+from service.service import handle_inbound_email, handle_inbound_whatsapp, handle_paypal_event
 
 logger = get_logger(__name__)
 router = APIRouter()
 
-# We need wrappers for background tasks because they must manage their own DB sessions
-# since the request's DB session might close before the task completes.
-async def bg_payment_event(payload: dict):
+
+async def bg_paypal_event(event: dict):
+    """Process a verified webhook with its own DB session."""
     async with AsyncSessionLocal() as session:
-        await handle_payment_event(payload, session)
+        try:
+            result = await handle_paypal_event(event, session)
+            logger.info("[PAYPAL WEBHOOK] Processed %s: %s", event.get("id"), result)
+        except Exception as exc:
+            logger.exception("[PAYPAL WEBHOOK] Processing failed for %s: %s", event.get("id"), exc)
+        finally:
+            record = await session.get(WebhookEvent, event.get("id"))
+            if record:
+                record.processed_at = datetime.now()
+                session.add(record)
+                await session.commit()
+
 
 async def bg_inbound_email(payload: dict):
     async with AsyncSessionLocal() as session:
         await handle_inbound_email(payload, session)
-        
+
+
 async def bg_inbound_whatsapp(from_number: str, body: str):
     async with AsyncSessionLocal() as session:
         await handle_inbound_whatsapp(from_number, body, session)
 
 
-@router.post("/listen-events")
-async def events_receiver(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    x_razorpay_signature: str | None = Header(default=None, alias="X-Razorpay-Signature"),
-):
-    """
-    Razorpay Webhook for Payment Events with cryptographic HMAC-SHA256 signature verification.
-    If RAZORPAY_WEBHOOK_SECRET is set, signature validity is strictly verified.
-    In DEMO_MODE or when secret is unconfigured, permits graceful fallback so local testing/curl is unaffected.
-    """
+@router.post("/webhooks/paypal")
+async def paypal_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Verify, de-duplicate, and enqueue a PayPal webhook delivery."""
     body_bytes = await request.body()
-    body_str = body_bytes.decode("utf-8") if body_bytes else ""
-    secret = settings.razorpay_webhook_secret
-
-    if secret:
-        if not x_razorpay_signature:
-            if settings.demo_mode:
-                logger.warning("[WEBHOOK] Missing X-Razorpay-Signature in DEMO_MODE; bypassing for local testing.")
-            else:
-                logger.error("[WEBHOOK] Missing X-Razorpay-Signature header in production mode.")
-                raise HTTPException(status_code=400, detail="Missing X-Razorpay-Signature header")
-        else:
-            try:
-                razorpay_client.utility.verify_webhook_signature(body_str, x_razorpay_signature, secret)
-                logger.info("[WEBHOOK] Razorpay webhook signature verified successfully.")
-            except SignatureVerificationError:
-                logger.error("[WEBHOOK] Invalid Razorpay webhook signature.")
-                raise HTTPException(status_code=400, detail="Invalid Razorpay webhook signature")
-    elif x_razorpay_signature:
-        logger.info("[WEBHOOK] Received X-Razorpay-Signature but RAZORPAY_WEBHOOK_SECRET is not configured.")
-
     try:
-        payload = json.loads(body_str) if body_str else {}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}")
+        event = json.loads(body_bytes) if body_bytes else {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}") from exc
 
-    background_tasks.add_task(bg_payment_event, payload)
-    return {"status": "accepted"}
-    
+    if not event.get("id") or not event.get("event_type"):
+        raise HTTPException(status_code=400, detail="Missing PayPal event id or event_type")
+
+    accepted, detail = await verify_webhook(request.headers, event)
+    if not accepted:
+        raise HTTPException(status_code=400, detail=f"PayPal webhook verification failed: {detail}")
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.get(WebhookEvent, str(event["id"]))
+        if existing:
+            return {"status": "duplicate", "event_id": event["id"]}
+
+        record = WebhookEvent(
+            event_id=str(event["id"]),
+            event_type=str(event["event_type"]),
+            resource_id=str((event.get("resource") or {}).get("id") or ""),
+        )
+        session.add(record)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return {"status": "duplicate", "event_id": event["id"]}
+
+    background_tasks.add_task(bg_paypal_event, event)
+    return {"status": "accepted", "event_id": event["id"], "verification": detail}
+
 
 @router.post("/listen-emails")
 async def email_receiver(request: Request, background_tasks: BackgroundTasks):
-    """Resend Inbound Email Webhook"""
+    """Resend inbound email webhook."""
     payload = await request.json()
     background_tasks.add_task(bg_inbound_email, payload)
     return {"status": "accepted"}
 
 
 @router.post("/listen-message")
-async def whatsapp_receiver(background_tasks: BackgroundTasks, From: str = Form(...), Body: str = Form(...)):
-    """Twilio WhatsApp Webhook"""
+async def whatsapp_receiver(
+    background_tasks: BackgroundTasks, From: str = Form(...), Body: str = Form(...)
+):
+    """Twilio WhatsApp webhook."""
     background_tasks.add_task(bg_inbound_whatsapp, From, Body)
     return {"status": "accepted"}

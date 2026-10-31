@@ -3,8 +3,6 @@ import calendar
 from datetime import date, datetime, timedelta
 
 from config.clients import (
-    create_rzp_mandate_update_link,
-    create_rzp_payment_link,
     generate_and_send_voice_note,
     send_resend_email,
     send_twilio_whatsapp,
@@ -14,7 +12,6 @@ from config.config import settings
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from models.schema import (
-    AuditEntry,
     CompleteCaseArgs,
     DiscountOfferArgs,
     EmailReminderArgs,
@@ -25,14 +22,12 @@ from models.schema import (
 )
 from service.states import load_state, save_state
 from service.compliance import (
-    adjust_for_trai_window,
-    calculate_rbi_pre_debit_schedule,
-    calculate_salary_milestones,
-    format_rbi_pre_debit_intimation,
+    adjust_for_contact_window,
+    calculate_payday_milestones,
     build_whatsapp_payload,
     get_bell_curve_discount,
-    is_recurring_mandate_case,
 )
+from service.money import format_money
 from typing import Optional
 from config.logger import get_logger
 
@@ -59,24 +54,26 @@ async def send_email_reminder(urgency: str, config: RunnableConfig) -> str:
         state = await load_state(case_id, db)
         customer_name = state.customer.get("name", "Customer")
         customer_email = state.customer.get("email", "")
-        amount_inr = state.amount_inr
+        amount = state.amount
 
         logger.info(f"\n  [TOOL] send_email_reminder")
         logger.info(f"    → To      : {customer_name} <{customer_email}>")
-        logger.info(f"    → Amount  : ₹{amount_inr}")
+        logger.info(f"    → Amount  : {format_money(amount, state.currency)}")
         logger.info(f"    → Urgency : {urgency}")
 
         ref_code = state.case_id[-4:].upper() if len(state.case_id) >= 4 else state.case_id
         payment_link, _, _ = await ensure_payment_link(state, db)
         meta = state.case_metadata or {}
-        amount_inr = meta.get("effective_amount_inr", state.amount_inr)
+        amount = meta.get("effective_amount", state.amount)
 
         extra_ctx = {
             "invoice_number": meta.get("invoice_number", f"INV-2026-{ref_code}"),
             "link": payment_link
         }
 
-        await send_resend_email(urgency, customer_name, customer_email, amount_inr, extra_context=extra_ctx)
+        await send_resend_email(
+            urgency, customer_name, customer_email, amount, extra_context=extra_ctx, currency=state.currency
+        )
 
         next_contact = get_next_follow_up_time(state)
         if next_contact:
@@ -86,9 +83,15 @@ async def send_email_reminder(urgency: str, config: RunnableConfig) -> str:
             await save_state(state, db)
 
         if "b2b" in urgency:
-            email_msg = f"Corporate Dunning ({urgency}): Invoice {extra_ctx['invoice_number']} for ₹{amount_inr:,.0f} sent to Accounts Payable <{customer_email}>."
+            email_msg = (
+                f"Corporate dunning ({urgency}): invoice {extra_ctx['invoice_number']} for "
+                f"{format_money(amount, state.currency)} sent to Accounts Payable <{customer_email}>."
+            )
         else:
-            email_msg = f"Reminder ({urgency}): Payment of ₹{amount_inr:,.0f} for your order is due. Please complete payment to avoid service interruption."
+            email_msg = (
+                f"Reminder ({urgency}): payment of {format_money(amount, state.currency)} for your order "
+                f"is due. Please complete payment to avoid service interruption."
+            )
         await _log_audit(
             state,
             "send_email_reminder",
@@ -116,10 +119,10 @@ async def calculate_discount_offer(config: RunnableConfig = None) -> str:
             return "Case state not found."
 
         if state.case_type != "abandoned_checkout":
-            return "Policy rejection: Concessions and discounts are not authorized for commercial invoices or recurring subscription mandates."
+            return "Policy rejection: concessions are only authorized for abandoned checkouts, not invoices or subscriptions."
 
         discount_pct = get_bell_curve_discount(state)
-        original_amt = state.amount_inr
+        original_amt = state.amount
         discounted_amt = round(original_amt * (1.0 - (discount_pct / 100.0)), 2)
         await save_state(state, db)
 
@@ -128,14 +131,18 @@ async def calculate_discount_offer(config: RunnableConfig = None) -> str:
             "calculate_discount_offer",
             None,
             db,
-            message=f"Deterministic margin approval: {discount_pct:.0f}% concession approved (payable: ₹{discounted_amt:,.0f}).",
+            message=(
+                f"Deterministic margin approval: {discount_pct:.0f}% concession approved "
+                f"(payable: {format_money(discounted_amt, state.currency)})."
+            ),
             channel="system",
             direction="system",
         )
 
         return (
             f"Approved Concession: {discount_pct:.0f}% discount authorized under margin policy. "
-            f"Original amount: ₹{original_amt:,.0f}, Discounted payable amount: ₹{discounted_amt:,.0f}. "
+            f"Original amount: {format_money(original_amt, state.currency)}, "
+            f"discounted payable amount: {format_money(discounted_amt, state.currency)}. "
             f"Call create_payment_link(discount_pct={discount_pct:.0f}) to generate the checkout link."
         )
 
@@ -143,8 +150,7 @@ async def calculate_discount_offer(config: RunnableConfig = None) -> str:
 @tool(args_schema=PaymentLinkArgs)
 async def create_payment_link(discount_pct: float = 0.0, config: RunnableConfig = None) -> str:
     """
-    Create a Razorpay payment or mandate re-authorization link for the customer.
-    Differentiates between one-time checkouts and recurring subscriptions (sub_card_change).
+    Create a PayPal payment, invoice, or subscription update-method link for the customer.
     Optionally accepts a discount_pct bounded by policy (e.g., between 5% and 30%).
     """
     case_id = config.get("configurable", {}).get("thread_id") if config else None
@@ -154,7 +160,7 @@ async def create_payment_link(discount_pct: float = 0.0, config: RunnableConfig 
             return "Error: Case state not found."
         short_url, link_type, is_subscription = await ensure_payment_link(state, db, discount_pct)
         meta = state.case_metadata or {}
-        amount_inr = meta.get("effective_amount_inr", state.amount_inr)
+        amount = meta.get("effective_amount", state.amount)
         applied_disc = meta.get("discount_pct", 0.0)
 
         next_contact = get_next_follow_up_time(state)
@@ -164,14 +170,17 @@ async def create_payment_link(discount_pct: float = 0.0, config: RunnableConfig 
             except Exception as e:
                 logger.info(f"    [WARN] Failed to schedule follow-up task (non-fatal): {e}")
 
-        disc_str = f" ({applied_disc:.0f}% discount applied, payable ₹{amount_inr:,.0f})" if applied_disc > 0 else ""
+        disc_str = (
+            f" ({applied_disc:.0f}% discount applied, payable {format_money(amount, state.currency)})"
+            if applied_disc > 0
+            else ""
+        )
         if is_subscription:
             link_msg = (
-                f"Mandate Re-Authorization Link generated for recurring subscription: {short_url} "
-                f"(Penny-drop auth to migrate token & protect future LTV)"
+                f"PayPal subscription update-method link generated: {short_url}"
             )
         else:
-            link_msg = f"Secure Razorpay payment link generated{disc_str}: {short_url}"
+            link_msg = f"Secure PayPal payment link generated{disc_str}: {short_url}"
 
         await _log_audit(
             state,
@@ -184,8 +193,8 @@ async def create_payment_link(discount_pct: float = 0.0, config: RunnableConfig 
         )
 
     if is_subscription:
-        return f"Mandate re-authorization link generated for subscription: {short_url} (Token migration enabled)"
-    return f"Payment link generated: {short_url}{disc_str}"
+        return f"PayPal subscription update-method link generated: {short_url}"
+    return f"PayPal payment link generated: {short_url}{disc_str}"
 
 
 @tool(args_schema=EscalateArgs)
@@ -209,17 +218,17 @@ async def escalate_to_human(reason: str, config: RunnableConfig) -> str:
 
 
 @tool(args_schema=SalaryDateArgs)
-async def get_next_salary_date(config: RunnableConfig) -> str:
+async def get_next_payday_date(config: RunnableConfig) -> str:
     """
-    Returns upcoming salary milestone dates (1st, 15th, last Friday of month).
-    Use this to decide the best retry date for soft declines (insufficient funds).
+    Returns upcoming payday milestone dates (1st, 15th, last Friday of month).
+    Use this to choose the best retry date for soft declines (insufficient funds).
     """
     case_id = config.get("configurable", {}).get("thread_id")
 
     async with app_db.AsyncSessionLocal() as db:
         state = await load_state(case_id, db)
         ref = state.next_retry_at.date() if (state and state.next_retry_at) else date.today()
-        milestones = calculate_salary_milestones(ref)
+        milestones = calculate_payday_milestones(ref)
 
         result = ", ".join(str(d) for d in milestones)
         closest = milestones[0]
@@ -232,18 +241,18 @@ async def get_next_salary_date(config: RunnableConfig) -> str:
         except Exception as e:
             logger.info(f"    [WARN] Failed to schedule follow-up task (non-fatal): {e}")
 
-        salary_msg = f"Upcoming salary dates: {result}. Auto-scheduled next follow-up for {target_time.strftime('%b %d, %Y')}."
+        payday_msg = f"Upcoming payday dates: {result}. Auto-scheduled next follow-up for {target_time.strftime('%b %d, %Y')}."
         await _log_audit(
             state,
-            "get_next_salary_date",
+            "get_next_payday_date",
             target_time,
             db,
-            message=salary_msg,
+            message=payday_msg,
             channel="system",
             direction="system",
         )
 
-    logger.info(f"\n  [TOOL] get_next_salary_date")
+    logger.info(f"\n  [TOOL] get_next_payday_date")
     logger.info(f"    → Upcoming milestones: {result}. Scheduled retry for {target_time}.")
 
     return result
@@ -474,16 +483,6 @@ async def log_promise_to_pay(
             except ValueError:
                 continue
         if not target_date:
-            try:
-                target_date = datetime.fromisoformat(clean_date_str)
-            except Exception:
-                try:
-                    from dateutil.parser import parse
-                    target_date = parse(clean_date_str, fuzzy=True, default=datetime(now.year, now.month, now.day, 10, 0))
-                except Exception:
-                    target_date = None
-
-        if not target_date:
             # Ambiguous or unparseable date -> do not escalate! Follow up as usual (+3 days)
             from datetime import time as dt_time
             follow_up_time = datetime.combine((now + timedelta(days=3)).date(), dt_time(10, 0))
@@ -565,7 +564,7 @@ tools = [
     create_payment_link,
     calculate_discount_offer,
     escalate_to_human,
-    get_next_salary_date,
+    get_next_payday_date,
     complete_case,
     get_voice_call,
     send_whatsapp_msg,

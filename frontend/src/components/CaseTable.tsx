@@ -94,7 +94,7 @@ export function CaseTable({
 
                 {/* Amount */}
                 <TableCell className={`text-[13px] font-semibold tracking-tight ${c.recovery_status === 'recovered' ? 'text-emerald-400' : 'text-zinc-300'}`}>
-                  ₹{fmt(c.amount_inr)}
+                  ${fmt(c.amount)}
                 </TableCell>
 
                 {/* Type */}

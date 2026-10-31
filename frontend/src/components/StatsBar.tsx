@@ -11,13 +11,13 @@ export function StatsBar({ stats }: { stats?: Stats | null; loading?: boolean })
       {/* At Risk */}
       <div className="bg-[#0f0f14] border border-zinc-800/60 rounded-xl p-5 flex flex-col justify-center">
         <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">At Risk</p>
-        <p className="text-3xl font-bold text-amber-400">₹{fmt(currentStats.total_at_risk_inr)}</p>
+        <p className="text-3xl font-bold text-amber-400">${fmt(currentStats.total_at_risk)}</p>
       </div>
 
       {/* Recovered */}
       <div className="bg-[#0f0f14] border border-zinc-800/60 rounded-xl p-5 flex flex-col justify-center">
         <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Recovered</p>
-        <p className="text-3xl font-bold text-emerald-400">₹{fmt(currentStats.recovered_amount_inr)}</p>
+        <p className="text-3xl font-bold text-emerald-400">${fmt(currentStats.recovered_amount)}</p>
       </div>
 
       {/* Recovery Rate */}

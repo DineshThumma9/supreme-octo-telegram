@@ -1,13 +1,16 @@
-import asyncio
+import re
 from typing import Optional
 
 import httpx
-import razorpay
 import resend
 from config.config import settings
 from config.constants import email_messages
 from config.logger import get_logger
 from elevenlabs.client import AsyncBaseElevenLabs
+from paypal.client import paypal_client
+from paypal.invoicing import create_recovery_invoice
+from paypal.orders import create_recovery_order
+from paypal.subscriptions import create_update_method_link
 from redis.asyncio import Redis
 from twilio.http.async_http_client import AsyncTwilioHttpClient
 from twilio.rest import Client
@@ -21,15 +24,9 @@ twilo_client = None
 http_client = None
 redis_client = None
 
-razorpay_client = razorpay.Client(
-    auth=(settings.razorpay_key_id, settings.razorpay_key_secret)
-)
 
 async def init_clients():
-    """
-    Eagerly initializes all network clients (HTTP, Redis, Twilio)
-    during FastAPI lifespan startup so singletons are ready and pooled.
-    """
+    """Eagerly initialize pooled network clients during FastAPI startup."""
     global twilo_http_client, twilo_client, http_client, redis_client
     if http_client is None:
         http_client = httpx.AsyncClient()
@@ -44,7 +41,7 @@ async def init_clients():
             settings.twilo_auth_token,
             http_client=twilo_http_client,
         )
-    logger.info("Shared clients initialized (HTTP, Redis, Twilio).")
+    logger.info("Shared clients initialized (HTTP, Redis, Twilio, PayPal).")
 
 
 def get_twilio_client():
@@ -58,11 +55,13 @@ def get_twilio_client():
         )
     return twilo_client
 
+
 def get_http_client():
     global http_client
     if http_client is None:
         http_client = httpx.AsyncClient()
     return http_client
+
 
 def get_redis_client():
     global redis_client
@@ -72,24 +71,35 @@ def get_redis_client():
 
 
 async def send_resend_email(
-    urgency: str, customer_name: str, customer_email: str, amount_inr: float, extra_context: Optional[dict] = None
-):
+    urgency: str,
+    customer_name: str,
+    customer_email: str,
+    amount: float,
+    extra_context: Optional[dict] = None,
+    currency: str = "USD",
+) -> bool:
     extra = extra_context or {}
     template = email_messages.get(urgency, email_messages["gentle"])
     try:
         html_content = template.format(
             name=customer_name,
-            amount=f"{amount_inr:,.0f}",
+            amount=f"{amount:,.2f}",
             invoice_number=extra.get("invoice_number", "INV-2026-001"),
-            link=extra.get("link", f"https://rzp.io/l/inv-{customer_email.split('@')[0] if customer_email else 'corp'}")
+            link=extra.get("link", settings.frontend_url or "https://www.paypal.com"),
         )
     except Exception:
-        html_content = template.format(name=customer_name, amount=f"{amount_inr:,.0f}")
+        html_content = template.format(name=customer_name, amount=f"{amount:,.2f}")
 
     try:
         if settings.demo_mode:
-            logger.info(f"[DEMO SANDBOX] Email to {customer_email} ({urgency}): amount ₹{amount_inr:,.0f} (credits preserved)")
-            return True 
+            logger.info(
+                "[DEMO SANDBOX] Email to %s (%s): amount %s %.2f (credits preserved)",
+                customer_email,
+                urgency,
+                currency,
+                amount,
+            )
+            return True
 
         response = await resend.Emails.send_async(
             {
@@ -99,106 +109,58 @@ async def send_resend_email(
                 "html": html_content,
             }
         )
-
-        logger.info(f"Email sent successfully: {response}")
+        logger.info("Email sent successfully: %s", response)
         return True
-    except Exception as e:
-        logger.warning(f"(Simulated email due to missing Resend API key: {e})")
+    except Exception as exc:
+        logger.warning("Simulated email due to missing Resend API key: %s", exc)
         return False
 
 
-async def create_rzp_payment_link(
-    customer_name: str, customer_email: str, customer_contact: str, amount_inr: float
+async def create_paypal_payment_link(
+    state,
+    amount: float | None = None,
+    currency: str | None = None,
+    discount_pct: float = 0.0,
 ) -> str:
-    # In demo mode or for test benchmark scenarios, use deterministic mock link to avoid Razorpay 30-link test quota
-    if settings.demo_mode or "@example.com" in customer_email or "test" in customer_email:
-        ref = customer_email.split('@')[0] if customer_email else "recovery"
-        return f"https://rzp.io/l/sim-{ref}"
-
-    amount_paise = round(amount_inr * 100)
-
-    def _create():
-        return razorpay_client.payment_link.create(
-            {
-                "amount": amount_paise,
-                "currency": "INR",
-                "description": "Payment Recovery",
-                "customer": {
-                    "name": customer_name,
-                    "email": customer_email,
-                    "contact": customer_contact,
-                },
-                "notify": {"sms": False, "email": False},
-            }
-        )
-
-    try:
-        response = await asyncio.wait_for(asyncio.to_thread(_create), timeout=3.5)
-        return response.get("short_url", "URL_NOT_FOUND")
-    except Exception as e:
-        ref = customer_email.split('@')[0] if customer_email else "recovery"
-        logger.info(f"Razorpay API note (using sandbox link): {e}")
-        return f"https://rzp.io/l/sim-{ref}"
+    order = await create_recovery_order(state, amount=amount, currency=currency, discount_pct=discount_pct)
+    return order.get("approve_url") or f"https://www.sandbox.paypal.com/checkoutnow?token={order.get('id')}"
 
 
-async def create_rzp_mandate_update_link(
-    subscription_id: str,
-    customer_name: str,
-    customer_email: str,
-    customer_contact: str,
-    amount_inr: float,
-) -> str:
-    """
-    Creates a Razorpay Mandate Re-Authorization / Token Migration Link.
-    For recurring subscriptions (e-mandate / UPI AutoPay / tokenized cards), this triggers
-    a penny-drop authentication (₹2 auth) that securely re-authenticates or migrates the
-    customer's recurring mandate, fixing future Lifetime Value (LTV).
-    """
-    ref = customer_email.split('@')[0] if customer_email else (subscription_id or "mandate")
-    if settings.demo_mode or "@example.com" in customer_email or "test" in customer_email:
-        return f"https://rzp.io/l/mandate-reauth-{ref}"
+async def create_paypal_mandate_update_link(state) -> str:
+    return await create_update_method_link(state)
 
-    try:
-        if subscription_id and subscription_id.startswith("sub_"):
-            try:
-                sub = await asyncio.to_thread(razorpay_client.subscription.fetch, subscription_id)
-                if sub.get("short_url"):
-                    return sub["short_url"]
-            except Exception as e:
-                logger.info(f"Razorpay subscription fetch fallback: {e}")
 
-        payload = {
-            "amount": round(amount_inr * 100),
-            "currency": "INR",
-            "description": f"Mandate Re-Authorization & Card Update ({subscription_id or 'AutoPay'})",
-            "customer": {
-                "name": customer_name,
-                "email": customer_email,
-                "contact": customer_contact,
-            },
-            "notes": {
-                "purpose": "mandate_reauthorization",
-                "sub_card_change": "true",
-                "subscription_id": subscription_id or "",
-                "auth_type": "penny_drop_reauth",
-            },
-            "notify": {"sms": False, "email": False},
-        }
-        res = await asyncio.to_thread(razorpay_client.payment_link.create, payload)
-        return res.get("short_url", f"https://rzp.io/l/mandate-{ref}")
-    except Exception as e:
-        logger.info(f"Razorpay Mandate API note (using fallback mandate link): {e}")
-        return f"https://rzp.io/l/mandate-reauth-{ref}"
+async def create_paypal_invoice_link(state, amount: float | None = None, currency: str | None = None) -> str:
+    invoice = await create_recovery_invoice(state, amount=amount, currency=currency)
+    return invoice.get("approve_url") or ""
+
+
+def _normalize_e164(contact_number: str) -> str:
+    if contact_number.startswith("+"):
+        return contact_number
+    digits = re.sub(r"\D", "", contact_number or "")
+    if len(digits) == 10:
+        return f"+1{digits}"
+    return f"+{digits}" if digits else contact_number
 
 
 async def send_twilio_whatsapp(
     contact_number: str, msg: str, media_url: Optional[str] = None
 ) -> str:
-    if not contact_number.startswith("+"):
-        contact_number = "+91" + contact_number
+    contact_number = _normalize_e164(contact_number)
 
-    if "9876543210" in contact_number or "1234567890" in contact_number or settings.demo_mode:
-        logger.info(f"[DEMO SANDBOX] WhatsApp to {contact_number}: '{msg[:75]}...' (Safe dispatch, credits preserved)")
+    if (
+        not contact_number
+        or "555555" in contact_number
+        or "9876543210" in contact_number
+        or "1234567890" in contact_number
+        or settings.demo_mode
+    ):
+        logger.info(
+            "[DEMO SANDBOX] WhatsApp to %s: '%s...' (Safe dispatch, credits preserved)",
+            contact_number,
+            msg[:75],
+        )
         return "SMdemo" + "0" * 26
 
     kwargs = {
@@ -211,41 +173,41 @@ async def send_twilio_whatsapp(
 
     client = get_twilio_client()
     try:
-    
         res = await client.messages.create_async(**kwargs)
-        if isinstance(res, tuple):
-            message = res[0]
-        else:
-            message = res
+        message = res[0] if isinstance(res, tuple) else res
         sid = getattr(message, "sid", str(message))
-        logger.info(f"Twilio WhatsApp message dispatched! SID: {sid}")
+        logger.info("Twilio WhatsApp message dispatched! SID: %s", sid)
         return sid
-    except Exception as e:
-        logger.error(f"Twilio WhatsApp Error: {e}")
-        return f"ERROR: {e}"
+    except Exception as exc:
+        logger.error("Twilio WhatsApp Error: %s", exc)
+        return f"ERROR: {exc}"
 
 
 async def cleanup_clients():
     global twilo_http_client, twilo_client, http_client, redis_client
-    if twilo_http_client and hasattr(twilo_http_client, 'session') and twilo_http_client.session:
+    if twilo_http_client and hasattr(twilo_http_client, "session") and twilo_http_client.session:
         try:
             await twilo_http_client.session.close()
-        except Exception as e:
-            logger.warning(f"Error closing Twilio session: {e}")
+        except Exception as exc:
+            logger.warning("Error closing Twilio session: %s", exc)
         twilo_http_client = None
         twilo_client = None
     if http_client:
         try:
             await http_client.aclose()
-        except Exception as e:
-            logger.warning(f"Error closing HTTP client: {e}")
+        except Exception as exc:
+            logger.warning("Error closing HTTP client: %s", exc)
         http_client = None
     if redis_client:
         try:
             await redis_client.aclose()
-        except Exception as e:
-            logger.warning(f"Error closing Redis client: {e}")
+        except Exception as exc:
+            logger.warning("Error closing Redis client: %s", exc)
         redis_client = None
+    try:
+        await paypal_client.close()
+    except Exception as exc:
+        logger.warning("Error closing PayPal client: %s", exc)
     logger.info("Shared clients cleaned up.")
 
 
@@ -255,7 +217,7 @@ async def generate_and_send_voice_note(contact_number: str, msg: str) -> str:
     try:
         if settings.demo_mode:
             logger.info("Dispatching Twilio WhatsApp Message (Demo Sandbox)...")
-            return "Mesage sent succefully"
+            return "Message sent successfully"
 
         audio_generator = elevenlabs_client.text_to_speech.convert(
             text=msg,
@@ -281,12 +243,11 @@ async def generate_and_send_voice_note(contact_number: str, msg: str) -> str:
             timeout=10,
         )
         media_url = response.text.strip()
-    except Exception as e:
-        logger.warning(f"Voice Note generation skipped/fallback ({e})")
+    except Exception as exc:
+        logger.warning("Voice note generation skipped/fallback (%s)", exc)
         media_url = "https://files.catbox.moe/voice_sample_recovery.mp3"
 
-    logger.info(f"Dispatching Twilio WhatsApp Voice Message (URL: {media_url})...")
+    logger.info("Dispatching Twilio WhatsApp Voice Message (URL: %s)...", media_url)
     body = "🎙️ (Voice Note attached) " + msg
     sid = await send_twilio_whatsapp(contact_number, body, media_url)
     return sid
-

@@ -13,13 +13,16 @@ from taskiq_redis import ListQueueBroker, ListRedisScheduleSource
 from taskiq import TaskiqScheduler
 from service.states import load_state, save_state
 from langchain_core.messages import HumanMessage
-from config.clients import razorpay_client as client, get_redis_client
+from config.clients import get_redis_client
 from models.models import RecoveryState
 from config.db import AsyncSessionLocal, _init_db
 from sqlmodel import select
 from agent.graph import build_agent
 from config.config import settings
 from config.logger import get_logger
+from paypal.events import custom_id
+from paypal.orders import get_order, order_amount, order_customer
+from service.money import format_money
 
 logger = get_logger(__name__)
 redis_url = settings.redis_url
@@ -104,57 +107,75 @@ async def revoke_active_task(task_id: str):
 
 @broker.task(task_name='worker.abandoned_cart_timer')
 async def abandoned_cart_timer(order_id: str, customer_data: dict):
-    logger.info(f"[TASKIQ] Checking abandoned cart for order {order_id}...")
-    
+    logger.info(f"[TASKIQ] Checking abandoned cart for PayPal order {order_id}...")
+
     # Worker is a separate process — must initialize the DB session factory
     _init_db()
-    
+
     try:
-        # Client operations should be async. If razorpay client is sync, we should use asyncio.to_thread
-        order = await asyncio.to_thread(client.order.fetch, order_id)
-        if order.get("status") == "paid":
-            logger.info(f"[TASKIQ] Order {order_id} is already paid. Aborting abandoned cart flow.")
-            return "Aborted: Order paid."
+        order = await get_order(order_id)
+        status = str(order.get("status") or "").upper()
+        if status in {"COMPLETED", "VOIDED"}:
+            logger.info(f"[TASKIQ] PayPal order {order_id} is {status}. Aborting abandoned cart flow.")
+            return "Aborted: Order already finished."
     except Exception as e:
-        logger.error(f"[TASKIQ] Error fetching order {order_id}: {e}")
+        logger.error(f"[TASKIQ] Error fetching PayPal order {order_id}: {e}")
         return
-        
+
     async with AsyncSessionLocal() as db:
-        # Check if a RecoveryState already exists for this order
-        existing = (await db.execute(select(RecoveryState).where(RecoveryState.source_id == order_id))).scalars().first()
+        # Check if a RecoveryState already exists for this order.
+        existing = (
+            await db.execute(
+                select(RecoveryState).where(
+                    (RecoveryState.paypal_order_id == order_id)
+                    | (RecoveryState.source_id == order_id)
+                )
+            )
+        ).scalars().first()
         if existing:
             logger.info(f"[TASKIQ] RecoveryState already exists for order {order_id}. Aborting.")
             return "Aborted: RecoveryState exists."
-            
-        # Create an abandoned checkout case
-        amount = float(order.get("amount", 0)) / 100.0
+
+        amount, currency = order_amount(order)
+        customer = {**order_customer(order), **(customer_data or {})}
+        case_ref = custom_id(order)
         rs = RecoveryState(
-            case_id=str(uuid.uuid4()),
+            case_id=case_ref or str(uuid.uuid4()),
             source_id=order_id,
+            paypal_order_id=order_id,
+            account_id="paypal_sandbox",
             case_type="abandoned_checkout",
             decline_type=None,
-            failure_reason="Checkout abandoned after 15 minutes",
+            failure_reason="PayPal checkout abandoned after 15 minutes",
             error_details={},
-            case_metadata={},
+            case_metadata={
+                "source_event_type": "CHECKOUT.ORDER.CREATED",
+                "paypal_order_id": order_id,
+                "payment_link": (
+                    (order.get("links") or [{}])[0].get("href") if order.get("links") else None
+                ),
+            },
             method=None,
-            amount_inr=amount,
+            amount=amount,
+            currency=currency,
             recovered_amount=0.0,
-            customer=customer_data,
-            contact_preference="whatsapp",
+            customer=customer,
+            contact_preference="email" if customer.get("email") else "whatsapp",
             language="english",
             recovery_status="pending",
             attempt_count=0,
             last_action_taken=None,
             first_seen_at=datetime.now(),
             next_retry_at=None,
-            audit_log=[]
+            audit_log=[],
         )
+        rs.case_metadata = {k: v for k, v in rs.case_metadata.items() if v}
         await save_state(rs, db)
-        
+
         agent = build_agent(rs)
         config = {"configurable": {"thread_id": rs.case_id}}
         await agent.ainvoke(
-            {"messages": [], "recovery_state": rs, "event_source": "automated.abandoned_cart"}, 
-            config=config
+            {"messages": [], "recovery_state": rs, "event_source": "automated.abandoned_cart"},
+            config=config,
         )
-    return f"Success: Abandoned cart flow initiated for {order_id}."
+    return f"Success: Abandoned cart flow initiated for {order_id} ({format_money(amount, currency)})."

@@ -217,7 +217,7 @@ export function CaseDrawer({
                     {detail.customer.contact && (
                       <span className="flex items-center gap-1.5">
                         <Phone className="w-3.5 h-3.5 text-zinc-500" />
-                        +91 {detail.customer.contact}
+                        {detail.customer.contact}
                       </span>
                     )}
                   </div>
@@ -226,7 +226,7 @@ export function CaseDrawer({
                 {/* Clean Amount */}
                 <div className="text-right shrink-0">
                   <div className="text-2xl font-bold text-zinc-100 tracking-tight">
-                    ₹{fmt(detail.amount_inr)}
+                    ${fmt(detail.amount)}
                   </div>
                   <div className="text-[11px] text-zinc-500 uppercase tracking-wider mt-0.5">
                     {detail.recovery_status === 'recovered' ? 'Recovered' : 'Amount at Risk'}

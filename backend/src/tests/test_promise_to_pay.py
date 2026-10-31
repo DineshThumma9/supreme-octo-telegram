@@ -23,6 +23,7 @@ for p in [str(SRC_DIR), str(BACKEND_DIR)]:
 
 from agent.tools import log_promise_to_pay
 from agent.utils import sanity_date
+from config.config import settings
 from config.db import AsyncSessionLocal
 from models.models import RecoveryState
 from service.states import load_state, save_state
@@ -31,6 +32,7 @@ from tests.common import GREEN, RESET, print_banner
 
 async def test_promise_to_pay_case():
     print_banner("2. Promise-To-Pay (PTP) Validation & Scheduling")
+    settings.demo_mode = True
     now = datetime.now()
 
     # 1. Valid future date (within 7 days max grace)
@@ -52,16 +54,17 @@ async def test_promise_to_pay_case():
     assert is_valid_far is False, "Date beyond policy grace period should be rejected"
 
     # 4. Anti-Exploitation: Cumulative Grace Period Tracking
-    # Failure on 1st, customer promised 6th (5 days used), on 6th tries to promise 12th (total 11 days > 7 limit)
-    incident_date = date(2026, 9, 1)
-    ptp_1 = datetime(2026, 9, 6, 10, 0)
+    # Incident five days ago; first promise today (5 days used), then the customer
+    # tries to re-promise six days from now (11 cumulative days > 7 limit).
+    incident_date = now.date() - timedelta(days=5)
+    ptp_1 = datetime.combine(incident_date + timedelta(days=5), datetime.min.time()).replace(hour=10)
     valid_ptp_1, msg_ptp_1 = sanity_date(ptp_1, anchor_date=incident_date)
-    print(f"  Testing Turn 1 promise 6th (incident 1st): valid={valid_ptp_1}, msg={msg_ptp_1}")
+    print(f"  Testing Turn 1 promise today (incident 5 days ago): valid={valid_ptp_1}, msg={msg_ptp_1}")
     assert valid_ptp_1 is True, "First promise within 7 cumulative days should be valid"
 
-    ptp_2_exploit = datetime(2026, 9, 12, 10, 0)
+    ptp_2_exploit = datetime.combine(incident_date + timedelta(days=11), datetime.min.time()).replace(hour=10)
     valid_ptp_2, msg_ptp_2 = sanity_date(ptp_2_exploit, anchor_date=incident_date)
-    print(f"  Testing Turn 2 chained promise 12th (incident 1st): valid={valid_ptp_2}, msg={msg_ptp_2}")
+    print(f"  Testing Turn 2 chained promise six days out (incident 5 days ago): valid={valid_ptp_2}, msg={msg_ptp_2}")
     assert valid_ptp_2 is False, "Chained promise exceeding cumulative 7-day limit from incident must be rejected"
 
     # 5. Tool execution test: Date extracted from typo ("5th of spet" -> valid tomorrow date)
@@ -69,11 +72,11 @@ async def test_promise_to_pay_case():
     async with AsyncSessionLocal() as db:
         ptp_case = RecoveryState(
             case_id=case_id_ptp,
-            source_id=f"order_{uuid.uuid4().hex[:6]}",
+            source_id=f"ORDER-{uuid.uuid4().hex[:6]}",
             case_type="failed_payment",
-            amount_inr=5000.0,
-            customer={"name": "Dinesh Test", "email": "test@example.com", "contact": "+919876543210"},
-            failure_reason="Insufficient funds",
+            amount=480.0,
+            customer={"name": "Alex Test", "email": "test@example.com", "contact": "+14155550123"},
+            failure_reason="insufficient_funds",
             recovery_status="pending",
             attempt_count=1,
             audit_log=[],
@@ -101,11 +104,11 @@ async def test_promise_to_pay_case():
     async with AsyncSessionLocal() as db:
         none_case = RecoveryState(
             case_id=case_id_none,
-            source_id=f"order_{uuid.uuid4().hex[:6]}",
+            source_id=f"ORDER-{uuid.uuid4().hex[:6]}",
             case_type="failed_payment",
-            amount_inr=5000.0,
-            customer={"name": "Dinesh Test", "email": "test@example.com", "contact": "+919876543210"},
-            failure_reason="Insufficient funds",
+            amount=480.0,
+            customer={"name": "Alex Test", "email": "test@example.com", "contact": "+14155550123"},
+            failure_reason="insufficient_funds",
             recovery_status="pending",
             attempt_count=1,
             audit_log=[],

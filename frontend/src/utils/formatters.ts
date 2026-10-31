@@ -1,10 +1,10 @@
 export function fmt(n: number) {
-  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n)
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(n)
 }
 
 export function fmtDate(s: string | null) {
   if (!s) return '—'
-  return new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+  return new Date(s).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
 }
 
 export function relTime(s: string | null) {
@@ -19,5 +19,5 @@ export function relTime(s: string | null) {
 
 export function fmtTs(s: string | null) {
   if (!s) return ''
-  return new Date(s).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  return new Date(s).toLocaleString('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }

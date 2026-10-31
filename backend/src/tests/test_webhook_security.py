@@ -1,19 +1,18 @@
 """
-Suite 6: Razorpay HMAC-SHA256 Webhook Signature Verification.
+Suite 6: PayPal Webhook Signature Verification & Idempotency.
 Validates:
-- Valid HMAC-SHA256 signature returns HTTP 200 (accepted)
-- Tampered or corrupted signature returns HTTP 400 (bad request)
-- Missing signature in DEMO_MODE permits graceful fallback for local development / testing
-- Missing signature in production mode (DEMO_MODE=False) strictly blocks with HTTP 400
+- Demo-mode bypass when no webhook ID/headers are configured (simulator events)
+- Fail-closed behavior in production when verification is not configured
+- SUCCESS/FAILURE responses from PayPal's verify-webhook-signature API
+- Duplicate event IDs are acknowledged without reprocessing
+- Malformed events are rejected before persistence
 """
 
 import asyncio
-from datetime import datetime
-import hashlib
-import hmac
 import json
 from pathlib import Path
 import sys
+import uuid
 
 SRC_DIR = Path(__file__).resolve().parent.parent
 BACKEND_DIR = SRC_DIR.parent
@@ -25,87 +24,116 @@ from httpx import ASGITransport, AsyncClient
 
 from config.config import settings
 from main import app
+from paypal.client import paypal_client
+from paypal.webhooks import verify_webhook
 from tests.common import GREEN, RESET, print_banner
 
 
-async def test_razorpay_webhook_signature_verification():
-    print_banner("6. Razorpay HMAC-SHA256 Webhook Signature Verification")
+def _event(event_id: str) -> dict:
+    return {
+        "id": event_id,
+        "event_type": "PAYMENT.CAPTURE.DENIED",
+        "resource_type": "capture",
+        "resource": {
+            "id": "CAP-TEST-123",
+            "status": "DECLINED",
+            "amount": {"value": "480.00", "currency_code": "USD"},
+            "status_details": {"reason": "insufficient_funds", "description": "Insufficient funds"},
+        },
+    }
 
-    orig_secret = settings.razorpay_webhook_secret
+
+async def test_paypal_webhook_signature_verification():
+    print_banner("6. PayPal Webhook Signature Verification & Idempotency")
+
     orig_demo = settings.demo_mode
+    orig_id = settings.paypal_webhook_id
+    orig_ids = settings.paypal_webhook_ids
+    orig_verify = paypal_client.verify_webhook_signature
 
     try:
-        settings.razorpay_webhook_secret = "whsec_test_demo_secret_key"
-        payload = json.dumps({
-            "entity": "event",
-            "account_id": "acc_demo_test",
-            "event": "payment.failed",
-            "contains": ["payment"],
-            "payload": {
-                "payment": {
-                    "entity": {
-                        "id": "pay_test_sig_123",
-                        "entity": "payment",
-                        "amount": 500000,
-                        "currency": "INR",
-                        "status": "failed",
-                        "order_id": "order_sig_123",
-                        "name": "Sig Test User",
-                        "email": "sig@example.com",
-                        "contact": "+919876543210",
-                        "error_description": "Card expired",
-                        "created_at": int(datetime.now().timestamp()),
-                    }
-                }
-            },
-        }).encode("utf-8")
+        # 1. Demo mode with no webhook ID accepts simulator-style deliveries.
+        settings.demo_mode = True
+        settings.paypal_webhook_id = ""
+        settings.paypal_webhook_ids = ""
+        accepted, detail = await verify_webhook({}, _event("WH-DEMO-1"))
+        assert accepted is True and "demo_bypass" in detail, (accepted, detail)
+        print("  Demo mode without webhook ID: accepted (bypass logged)")
 
-        valid_sig = hmac.new(b"whsec_test_demo_secret_key", payload, hashlib.sha256).hexdigest()
+        # 2. Production without a webhook ID fails closed.
+        settings.demo_mode = False
+        accepted, detail = await verify_webhook({}, _event("WH-PROD-1"))
+        assert accepted is False and detail == "no_webhook_id", (accepted, detail)
+        print("  Production without webhook ID: rejected")
 
+        # 3. Demo mode tolerates missing transmission headers.
+        settings.demo_mode = True
+        settings.paypal_webhook_id = "WH-TEST-ID"
+        accepted, detail = await verify_webhook({}, _event("WH-DEMO-2"))
+        assert accepted is True and "missing_headers" in detail, (accepted, detail)
+        print("  Demo mode with missing transmission headers: accepted (bypass logged)")
+
+        # 4. Production + configured ID calls PayPal; SUCCESS accepts, FAILURE rejects.
+        settings.demo_mode = False
+        headers = {
+            "paypal-auth-algo": "SHA256withRSA",
+            "paypal-cert-url": "https://api-m.sandbox.paypal.com/cert.pem",
+            "paypal-transmission-id": "tx-1",
+            "paypal-transmission-sig": "sig",
+            "paypal-transmission-time": "2026-10-31T00:00:00Z",
+        }
+
+        async def fake_success(headers, event):
+            return "SUCCESS", "WH-TEST-ID"
+
+        async def fake_failure(headers, event):
+            return "FAILURE", None
+
+        paypal_client.verify_webhook_signature = fake_success
+        accepted, detail = await verify_webhook(headers, _event("WH-PROD-2"))
+        assert accepted is True and detail.startswith("verified:"), (accepted, detail)
+        print("  Verified signature: accepted")
+
+        paypal_client.verify_webhook_signature = fake_failure
+        accepted, detail = await verify_webhook(headers, _event("WH-PROD-3"))
+        assert accepted is False and detail == "verification_failure", (accepted, detail)
+        print("  Failed signature: rejected")
+
+        # 5. Router behavior: malformed JSON / missing id are rejected.
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # 1. Valid signature -> 200 accepted
-            r_valid = await client.post(
-                "/listen-events",
-                content=payload,
-                headers={"X-Razorpay-Signature": valid_sig, "Content-Type": "application/json"},
+            r_bad_json = await client.post(
+                "/webhooks/paypal", content=b"{not-json", headers={"Content-Type": "application/json"}
             )
-            assert r_valid.status_code == 200, f"Expected 200 for valid signature, got {r_valid.status_code}"
-            print("  Valid signature: accepted (HTTP 200)")
+            assert r_bad_json.status_code == 400, r_bad_json.status_code
+            print("  Malformed JSON: rejected (HTTP 400)")
 
-            # 2. Tampered signature -> 400 Bad Request
-            r_bad = await client.post(
-                "/listen-events",
-                content=payload,
-                headers={"X-Razorpay-Signature": "tampered_signature_hex", "Content-Type": "application/json"},
+            r_missing = await client.post(
+                "/webhooks/paypal",
+                json={"event_type": "PAYMENT.CAPTURE.DENIED"},
+                headers={"Content-Type": "application/json"},
             )
-            assert r_bad.status_code == 400, f"Expected 400 for tampered signature, got {r_bad.status_code}"
-            print("  Tampered signature: rejected (HTTP 400)")
+            assert r_missing.status_code == 400, r_missing.status_code
+            print("  Missing event id: rejected (HTTP 400)")
 
-            # 3. Missing signature in DEMO_MODE -> 200 accepted (preserves local testing)
+            # 6. Demo delivery is accepted once, then acknowledged as duplicate.
             settings.demo_mode = True
-            r_demo_missing = await client.post(
-                "/listen-events",
-                content=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            assert r_demo_missing.status_code == 200, f"Expected 200 in DEMO_MODE bypass, got {r_demo_missing.status_code}"
-            print("  Missing signature in DEMO_MODE: permitted for seamless local testing (HTTP 200)")
+            settings.paypal_webhook_id = ""
+            settings.paypal_webhook_ids = ""
+            body = _event(f"WH-DUP-{uuid.uuid4().hex[:8]}")
+            r_first = await client.post("/webhooks/paypal", json=body)
+            assert r_first.status_code == 200, r_first.text
+            r_second = await client.post("/webhooks/paypal", json=body)
+            assert r_second.status_code == 200, r_second.text
+            assert r_second.json().get("status") == "duplicate", r_second.text
+            print("  Duplicate delivery: acknowledged without reprocessing")
 
-            # 4. Missing signature in Production (demo_mode=False) -> 400 Bad Request
-            settings.demo_mode = False
-            r_prod_missing = await client.post(
-                "/listen-events",
-                content=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            assert r_prod_missing.status_code == 400, f"Expected 400 in production for missing signature, got {r_prod_missing.status_code}"
-            print("  Missing signature in Production: strictly blocked (HTTP 400)")
-
-        print(f"{GREEN}✓ Razorpay HMAC Webhook Signature Verification passed!{RESET}")
+        print(f"{GREEN}✓ PayPal webhook verification and idempotency passed!{RESET}")
     finally:
-        settings.razorpay_webhook_secret = orig_secret
         settings.demo_mode = orig_demo
+        settings.paypal_webhook_id = orig_id
+        settings.paypal_webhook_ids = orig_ids
+        paypal_client.verify_webhook_signature = orig_verify
 
 
 if __name__ == "__main__":
-    asyncio.run(test_razorpay_webhook_signature_verification())
+    asyncio.run(test_paypal_webhook_signature_verification())

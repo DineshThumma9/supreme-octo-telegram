@@ -14,12 +14,12 @@ from config.logger import get_logger
 from models.models import RecoveryState
 from service.broadcast import broadcast_case_update
 from service.compliance import (
-    adjust_for_trai_window,
-    calculate_rbi_pre_debit_schedule,
+    adjust_for_contact_window,
     get_bell_curve_discount,
-    is_recurring_mandate_case,
-    is_within_trai_window,
+    is_subscription_case,
+    is_within_contact_window,
 )
+from service.money import format_money
 from service.states import save_state
 from agent.prompts import build_system_prompt, get_escalation_tone
 from agent.tools import tools
@@ -46,10 +46,9 @@ async def compliance_guardrail(state: AgentState) -> dict:
     """
     Stage 2 Pre-Flight Compliance Guardrail Node.
     Runs FIRST on every incoming graph invocation before action routing:
-    1. Enforces TRAI Operating Window (09:00 - 21:00 IST): If automated event arrives outside
-       business hours, schedules morning wakeup (09:05 AM) and halts outreach without burning LLM tokens.
-    2. Enforces RBI Section 10(2) PSS Act: Pre-calculates 24-hour pre-debit intimation for recurring subscriptions.
-    3. Injects strict policy bounds (min/max discount, max grace period) directly into state metadata.
+    1. Enforces the merchant-local outreach window: automated events outside
+       business hours are deferred to the next permitted slot without burning LLM tokens.
+    2. Injects strict policy bounds (min/max discount, max grace period) into state metadata.
     """
     rs = state["recovery_state"]
     event_source = state.get("event_source", "automated.webhook")
@@ -60,8 +59,8 @@ async def compliance_guardrail(state: AgentState) -> dict:
         rs.error_details = {}
 
     # 1. Pre-calculate and inject dynamic compliance bounds
-    in_trai_window = is_within_trai_window()
-    is_recurring = is_recurring_mandate_case(rs)
+    in_contact_window = is_within_contact_window()
+    is_subscription = is_subscription_case(rs)
 
     # For abandoned checkout cases: evaluate and idempotently lock the margin-safe bell-curve discount
     if rs.case_type == "abandoned_checkout":
@@ -72,53 +71,52 @@ async def compliance_guardrail(state: AgentState) -> dict:
         "min_discount": float(settings.min_discount),
         "max_discount": float(settings.max_discount),
         "max_grace_period": int(settings.max_grace_period),
-        "trai_operating_window_active": in_trai_window,
-        "is_recurring_mandate": is_recurring,
+        "contact_window_start_hour": int(settings.contact_window_start_hour),
+        "contact_window_end_hour": int(settings.contact_window_end_hour),
+        "contact_window_active": in_contact_window,
+        "is_subscription": is_subscription,
         "eligible_discount": (rs.case_metadata or {}).get("eligible_discount"),
     }
 
-    # 2. RBI Pre-Debit schedule verification for recurring subscriptions
-    if is_recurring and rs.next_retry_at:
-        pre_debit_dt = calculate_rbi_pre_debit_schedule(rs, rs.next_retry_at)
-        rs.case_metadata["rbi_pre_debit_compliance"] = {
-            "pss_act_section": "10(2)",
-            "mandate_pre_debit_required": True,
-            "scheduled_debit_at": rs.next_retry_at.isoformat(),
-            "pre_debit_intimation_at": pre_debit_dt.isoformat() if pre_debit_dt else None,
-            "compliance_verified": True,
-        }
-
-    # 3. Max Attempts Stopping Rule Enforcement (Hard-Stop Policy: Max 3 Attempts)
-    # Evaluated FIRST before outreach or curfew checks so terminal cases never get delayed or retried.
+    # 2. Max Attempts Stopping Rule Enforcement (Hard-Stop Policy: Max 3 Attempts)
+    # Evaluated FIRST before outreach or window checks so terminal cases never get delayed or retried.
     if (rs.attempt_count or 0) >= 3 and event_source != "inbound.human_approval" and rs.recovery_status not in ["recovered", "closed", "escalated"]:
         rs.attempt_count = min(3, rs.attempt_count or 0)
-        context_str = f"Context: Name={rs.customer.get('name', 'Unknown')}, Amount=₹{rs.amount_inr:,.0f}, Case={rs.case_type}, Last Action={rs.last_action_taken}"
+        context_str = (
+            f"Context: Name={rs.customer.get('name', 'Unknown')}, "
+            f"Amount={format_money(rs.amount, rs.currency)}, Case={rs.case_type}, "
+            f"Last Action={rs.last_action_taken}"
+        )
         reason = f"Max recovery outreach attempts (3) exhausted without resolution. {context_str}"
         logger.info(f"[COMPLIANCE GUARDRAIL] Case {rs.case_id} reached attempt 3 >= 3. Auto-escalating to human operations.")
         await mark_case_escalated(rs, reason)
         return {"recovery_state": rs}
 
-    # 4. TRAI Curfew Enforcement for Automated Cold Outreach:
-    # Defers cold automated webhooks arriving outside 09:00 - 21:00 IST to 09:05 AM.
+    # 3. Contact-window enforcement for automated cold outreach:
+    # Defers cold automated webhooks arriving outside business hours.
     # Excludes: inbound customer replies, pre-scheduled daytime follow-ups, and interactive simulation.
     is_inbound = event_source.startswith("inbound.")
     is_scheduled = event_source == "scheduled.follow_up"
-    is_sim = rs.case_id.startswith("pay_fail_") or getattr(rs, "account_id", "") in ["acc_TestMode", "acc_default"] or settings.demo_mode
+    is_sim = (
+        rs.case_id.startswith("pay_fail_")
+        or getattr(rs, "account_id", "") in ["paypal_default", "paypal_sandbox"]
+        or settings.demo_mode
+    )
 
-    if not in_trai_window and not is_inbound and not is_scheduled and not is_sim and rs.recovery_status not in ["recovered", "closed", "escalated"]:
-        morning_contact = adjust_for_trai_window(datetime.now())
+    if not in_contact_window and not is_inbound and not is_scheduled and not is_sim and rs.recovery_status not in ["recovered", "closed", "escalated"]:
+        morning_contact = adjust_for_contact_window(datetime.now())
         rs.next_retry_at = morning_contact
-        rs.case_metadata["trai_curfew_deferred"] = True
-        logger.info(f"[COMPLIANCE GUARDRAIL] Outside TRAI 9 AM - 9 PM window. Deferring cold case {rs.case_id} to {morning_contact.isoformat()}.")
+        rs.case_metadata["contact_window_deferred"] = True
+        logger.info(f"[COMPLIANCE GUARDRAIL] Outside the outreach window. Deferring cold case {rs.case_id} to {morning_contact.isoformat()}.")
 
         async with config.db.AsyncSessionLocal() as db:
             await _schedule_task(rs, morning_contact, db)
             await _log_audit(
                 rs,
-                "trai_window_curfew_defer",
+                "contact_window_deferred",
                 morning_contact,
                 db,
-                message=f"TRAI TCCCPR Curfew: Automated communication paused until business hours ({morning_contact.strftime('%d %b %I:%M %p')}).",
+                message=f"Automated communication paused until the permitted outreach window ({morning_contact.strftime('%d %b %I:%M %p')}).",
                 channel="system",
                 direction="system",
             )
@@ -131,13 +129,13 @@ async def compliance_guardrail(state: AgentState) -> dict:
 def route_after_compliance(state: AgentState) -> str:
     """
     Conditional router following the compliance_guardrail node:
-    - If deferred by TRAI curfew or already closed/recovered/escalated: bypass to audit -> END
+    - If deferred by the outreach window or already closed/recovered/escalated: bypass to audit -> END
     - If inbound customer reply: route to decide_reply (Mistral LLM)
     - If automated event inside operating window: route to decide_event (Deterministic Engine)
     """
     rs = state["recovery_state"]
-    if (rs.case_metadata or {}).get("trai_curfew_deferred"):
-        rs.case_metadata.pop("trai_curfew_deferred", None)
+    if (rs.case_metadata or {}).get("contact_window_deferred"):
+        rs.case_metadata.pop("contact_window_deferred", None)
         return "audit"
 
     if rs.recovery_status in ["recovered", "closed", "escalated"]:

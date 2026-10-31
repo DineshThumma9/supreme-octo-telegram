@@ -39,7 +39,7 @@ export function AuditTimeline({
         const isPaymentLink = e.channel === 'link' || e.event_triggered === 'create_payment_link'
         const isEscalation = e.event_triggered === 'escalate_to_human'
         const isInitialFailure = e.event_triggered === 'payment_failed'
-        const isSalary = e.event_triggered === 'get_next_salary_date'
+        const isSalary = e.event_triggered === 'get_next_payday_date'
         const isPromiseToPay = e.event_triggered === 'log_promise_to_pay'
         const isVoice = e.channel === 'voice' || e.event_triggered === 'get_voice_call'
 
@@ -48,7 +48,7 @@ export function AuditTimeline({
         let indicatorClass = "border-zinc-600 bg-zinc-800"
 
         if (isInitialFailure) {
-          title = `Payment Failed · ₹${e.amount}`
+          title = `Payment Failed · $${e.amount}`
           indicatorClass = "border-rose-500 bg-rose-500/20 text-rose-400"
         } else if (isCustomer) {
           title = `Customer Reply (${customerName || 'Customer'})`
@@ -63,13 +63,13 @@ export function AuditTimeline({
           title = "AI Voice Note Dispatched"
           indicatorClass = "border-purple-500 bg-purple-500/20 text-purple-400"
         } else if (isPaymentLink) {
-          title = "Razorpay Payment Link Generated"
+          title = "PayPal Payment Link Generated"
           indicatorClass = "border-sky-500 bg-sky-500/20 text-sky-400"
         } else if (isEscalation) {
           title = "Escalated to Human Operations"
           indicatorClass = "border-amber-500 bg-amber-500/20 text-amber-400"
         } else if (isSalary) {
-          title = "Salary Milestone Calculated"
+          title = "Payday Milestone Calculated"
           indicatorClass = "border-teal-500 bg-teal-500/20 text-teal-400"
         } else if (isPromiseToPay) {
           title = "Promise-to-Pay Recorded"

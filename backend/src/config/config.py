@@ -1,23 +1,27 @@
-
-
-
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
-
-# from dotenv import load_dotenv
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(_ENV_FILE, ".env"), extra="ignore")
 
     mistral_api_key: str = Field(default="", alias="MISTRAL_API_KEY")
-    razorpay_key_id: str = ""
-    razorpay_key_secret: str = ""
-    razorpay_webhook_secret: str = Field(default="", alias="RAZORPAY_WEBHOOK_SECRET")
+
+    # PayPal REST app credentials. Never commit real values.
+    paypal_client_id: str = Field(default="", alias="PAYPAL_CLIENT_ID")
+    paypal_client_secret: str = Field(default="", alias="PAYPAL_CLIENT_SECRET")
+    paypal_api_base: str = Field(
+        default="https://api-m.sandbox.paypal.com", alias="PAYPAL_API_BASE"
+    )
+    paypal_webhook_id: str = Field(default="", alias="PAYPAL_WEBHOOK_ID")
+    paypal_webhook_ids: str = Field(default="", alias="PAYPAL_WEBHOOK_IDS")
+    paypal_business_email: str = Field(default="", alias="PAYPAL_EMAIL")
+
     eleven_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
     twilo_account_sid: str = Field(default="", alias="TWILO_ACCOUNT_SID")
     twilo_auth_token: str = ""
@@ -39,6 +43,15 @@ class Settings(BaseSettings):
     demo_mode: bool = False
     port: int = 8000
     max_grace_period: int = 7
+
+    # Global outreach window, expressed in the merchant's local clock.
+    contact_window_start_hour: int = Field(default=9, alias="CONTACT_WINDOW_START_HOUR")
+    contact_window_end_hour: int = Field(default=21, alias="CONTACT_WINDOW_END_HOUR")
+
+    @property
+    def webhook_ids(self) -> list[str]:
+        raw = ",".join(filter(None, [self.paypal_webhook_id, self.paypal_webhook_ids]))
+        return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 settings = Settings()

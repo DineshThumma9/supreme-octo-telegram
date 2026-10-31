@@ -1,141 +1,72 @@
-"""
-Renvue Compliance & Regulatory Guardrail Engine.
+"""Deterministic compliance and messaging guardrails.
 
-Implements:
-1. TRAI Operating Window (9:00 AM - 9:00 PM IST) under TCCCPR telecom guidelines.
-2. RBI 24-Hour Pre-Debit Intimation Rule under Section 10(2) Payment and Settlement Systems Act (PSS Act).
-3. Meta WhatsApp 24-Hour Customer Care Window & HSM Utility Template Compliance.
+Global rules only:
+1. Outreach window (merchant-local 09:00–21:00) to avoid quiet hours.
+2. Meta WhatsApp 24-hour customer-care window and utility-template handling.
+3. Margin-safe, idempotently locked concession policy.
 """
+
+from __future__ import annotations
 
 import calendar
-from datetime import date, datetime, time, timedelta
-import logging
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, datetime, time, timedelta
+from typing import Any, Dict, Optional
 
 from config.config import settings
 from config.logger import get_logger
 from models.models import RecoveryState
+from service.money import format_money
 
 logger = get_logger(__name__)
 
-# TRAI Telecom Commercial Communications Customer Preference Regulations (TCCCPR)
-TRAI_START_TIME = time(9, 0)   # 9:00 AM
-TRAI_END_TIME = time(21, 0)    # 9:00 PM
+CONTACT_WINDOW_START = time(settings.contact_window_start_hour, 0)
+CONTACT_WINDOW_END = time(settings.contact_window_end_hour, 0)
 
 
-# =====================================================================
-# 1. TRAI Operating Window Guardrail (9:00 AM – 9:00 PM)
-# =====================================================================
-
-def is_within_trai_window(dt: Optional[datetime] = None) -> bool:
-    """
-    Checks if given timestamp (defaults to now) falls within the permitted
-    TRAI communication window (09:00 to 21:00).
-    """
+def is_within_contact_window(dt: Optional[datetime] = None) -> bool:
     check_dt = dt or datetime.now()
-    current_time = check_dt.time()
-    return TRAI_START_TIME <= current_time < TRAI_END_TIME
+    return CONTACT_WINDOW_START <= check_dt.time() < CONTACT_WINDOW_END
 
 
-def adjust_for_trai_window(dt: datetime) -> datetime:
-    """
-    Adjusts a target contact timestamp so it strictly falls within the
-    TRAI 9:00 AM - 9:00 PM operating window:
-    - Before 9:00 AM: snaps to today at 09:05 AM.
-    - At or after 9:00 PM: snaps to next day at 09:05 AM.
-    - Within 9:00 AM - 9:00 PM: preserves target time.
-    """
+def adjust_for_contact_window(dt: datetime) -> datetime:
+    """Snap a target timestamp into the permitted outreach window."""
     target_time = dt.time()
-    if target_time < TRAI_START_TIME:
-        return dt.replace(hour=9, minute=5, second=0, microsecond=0)
-    elif target_time >= TRAI_END_TIME:
+    if target_time < CONTACT_WINDOW_START:
+        return dt.replace(
+            hour=settings.contact_window_start_hour, minute=5, second=0, microsecond=0
+        )
+    if target_time >= CONTACT_WINDOW_END:
         next_day = dt + timedelta(days=1)
-        return next_day.replace(hour=9, minute=5, second=0, microsecond=0)
+        return next_day.replace(
+            hour=settings.contact_window_start_hour, minute=5, second=0, microsecond=0
+        )
     return dt
 
 
-# =====================================================================
-# 2. RBI 24-Hour Pre-Debit Intimation Rule (Section 10(2) PSS Act)
-# =====================================================================
-
-def is_recurring_mandate_case(state: RecoveryState) -> bool:
-    """
-    Determines if this case involves a recurring AutoPay / e-mandate under RBI circulars.
-    Applies to subscription retries, tokenized mandate updates, and subscription halt events.
-    """
+def is_subscription_case(state: RecoveryState) -> bool:
     meta = state.case_metadata or {}
     return (
-        state.case_type in ["failed_subscription", "subscription_cancelled"]
-        or bool(meta.get("mandate_update"))
-        or bool(meta.get("sub_card_change"))
-        or str(state.source_id or "").startswith("sub_")
+        state.case_type
+        in {"failed_subscription", "subscription_cancelled", "subscription_suspended"}
+        or bool(meta.get("subscription_id"))
+        or str(state.source_id or "").startswith("I-")
+        or bool(state.subscription_id)
     )
 
-
-def calculate_rbi_pre_debit_schedule(
-    state: RecoveryState,
-    retry_target: datetime,
-) -> Optional[datetime]:
-    """
-    Under RBI e-mandate guidelines (Section 10(2) PSS Act):
-    For recurring debits, an automated pre-debit intimation MUST be dispatched
-    at least 24 hours prior to actual auto-debit retry execution (T - 24h).
-
-    Returns the computed pre-debit intimation timestamp (adjusted for TRAI window),
-    or None if this is not a recurring mandate case.
-    """
-    if not is_recurring_mandate_case(state):
-        return None
-
-    # At least 24 hours required prior to debit retry
-    target = max(datetime.now(), retry_target - timedelta(hours=24))
-    return adjust_for_trai_window(target)
-
-
-def format_rbi_pre_debit_intimation(
-    state: RecoveryState,
-    debit_date: datetime,
-    payment_link: Optional[str] = None,
-) -> str:
-    """
-    Generates an RBI-compliant pre-debit intimation message.
-    """
-    name = state.customer.get("name", "Customer")
-    amount_str = f"₹{state.amount_inr:,.0f}"
-    sub_id = state.source_id or state.case_id[-8:]
-    date_str = debit_date.strftime("%d %b %Y at %I:%M %p")
-    ref_code = state.case_id[-4:].upper() if len(state.case_id) >= 4 else state.case_id
-
-    link_str = f"\n\nManage / Update AutoPay: {payment_link}" if payment_link else ""
-
-    return (
-        f"RBI MANDATE PRE-DEBIT NOTICE: Dear {name}, as required under RBI Section 10(2) PSS Act, "
-        f"your account will be auto-debited for {amount_str} on {date_str} for recurring plan ({sub_id}). "
-        f"Ensure sufficient balance.{link_str} (Ref: #RNV-{ref_code})"
-    )
-
-
-# =====================================================================
-# 3. Meta WhatsApp 24-Hour Window & HSM Utility Template Compliance
-# =====================================================================
 
 class WhatsAppHSMTemplate:
-    """Pre-approved Meta WhatsApp Utility / Authentication HSM Template definitions."""
+    """Pre-approved Meta WhatsApp utility template names."""
+
     PAYMENT_REMINDER = "renvue_payment_reminder_utility"
-    RBI_PRE_DEBIT = "renvue_pre_debit_intimation"
+    SUBSCRIPTION_UPDATE = "renvue_subscription_update"
     INVOICE_OVERDUE = "renvue_invoice_overdue_notice"
     CHECKOUT_RECOVERY = "renvue_checkout_recovery_utility"
 
 
 def has_active_whatsapp_session(state: RecoveryState, max_window_hours: int = 24) -> bool:
-    """
-    Verifies if the customer sent an inbound WhatsApp message within the last 24 hours,
-    which opens Meta's free-form customer service window.
-    """
     if not state.audit_log:
         return False
-
     threshold = datetime.now() - timedelta(hours=max_window_hours)
 
     def is_recent_inbound(entry: dict) -> bool:
@@ -153,34 +84,28 @@ def has_active_whatsapp_session(state: RecoveryState, max_window_hours: int = 24
     return any(is_recent_inbound(entry) for entry in reversed(state.audit_log))
 
 
-
 def build_whatsapp_payload(
     state: RecoveryState,
     raw_message: str,
     payment_link: Optional[str] = None,
     is_inbound_reply: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Applies Meta WhatsApp Business API compliance rules:
-    - If customer sent an inbound message within 24 hours: allows conversational free-form text.
-    - If outside 24 hours (cold outbound / automated webhook): structures the message into
-      a pre-approved Meta HSM Utility Template with positional parameters.
-    """
     name = state.customer.get("name", "Customer")
-    amount_str = f"₹{state.amount_inr:,.0f}"
+    amount_str = format_money(state.amount, state.currency or "USD")
     ref_code = state.case_id[-4:].upper() if len(state.case_id) >= 4 else state.case_id
     meta = state.case_metadata or {}
     effective_link = payment_link or meta.get("payment_link", "")
+    fallback_link = effective_link or settings.frontend_url or "the secure PayPal link"
 
-    # Hydrate {payment_link} placeholder in conversational/raw messages
     if effective_link and "{payment_link}" in raw_message:
         raw_message = raw_message.replace("{payment_link}", effective_link)
 
-    # Check 24-hour customer care window
     is_in_window = is_inbound_reply or has_active_whatsapp_session(state)
-
     if is_in_window:
-        logger.info(f"[WHATSAPP COMPLIANCE] Active 24h session verified for case {state.case_id}. Free-form text permitted.")
+        logger.info(
+            "[WHATSAPP COMPLIANCE] Active 24h session verified for case %s. Free-form text permitted.",
+            state.case_id,
+        )
         return {
             "mode": "freeform_session",
             "body": raw_message,
@@ -190,36 +115,46 @@ def build_whatsapp_payload(
             "meta_compliance": "ACTIVE_24H_WINDOW",
         }
 
-    # Cold outbound -> Strict HSM Utility Template required
-    logger.info(f"[WHATSAPP COMPLIANCE] Cold outbound for case {state.case_id}. Enforcing pre-approved Meta HSM Utility Template.")
+    logger.info(
+        "[WHATSAPP COMPLIANCE] Cold outbound for case %s. Enforcing utility template.",
+        state.case_id,
+    )
 
     if state.case_type == "overdue_invoice":
         template_name = WhatsAppHSMTemplate.INVOICE_OVERDUE
-        inv_num = meta.get("invoice_number", f"INV-2026-{ref_code}")
-        params = [name, inv_num, amount_str, effective_link or f"https://rzp.io/l/inv-{ref_code.lower()}", ref_code]
+        inv_num = meta.get("invoice_number", f"INV-{ref_code}")
+        params = [name, inv_num, amount_str, fallback_link, ref_code]
         rendered_body = (
-            f"Dear Accounts Payable ({name}), courtesy reminder that Invoice {inv_num} ({amount_str}) "
-            f"is overdue. Pay securely: {effective_link or 'Portal'}. (Ref: #RNV-{ref_code})"
+            f"Dear Accounts Payable ({name}), a courtesy reminder that Invoice {inv_num} "
+            f"({amount_str}) is overdue. Pay securely: {fallback_link}. (Ref: #RNV-{ref_code})"
         )
     elif state.case_type == "abandoned_checkout":
         template_name = WhatsAppHSMTemplate.CHECKOUT_RECOVERY
         disc = meta.get("discount_pct") or meta.get("eligible_discount")
-        eff_amt = meta.get("effective_amount_inr")
-        disc_text = f" ({disc:.0f}% off, now ₹{eff_amt:,.0f})" if disc and eff_amt else (f" ({disc:.0f}% off)" if disc else "")
-        params = [name, amount_str, effective_link, ref_code]
+        eff_amt = meta.get("effective_amount")
+        eff_text = (
+            format_money(eff_amt, state.currency or "USD")
+            if eff_amt is not None
+            else amount_str
+        )
+        disc_text = f" ({disc:.0f}% off, now {eff_text})" if disc else ""
+        params = [name, amount_str, fallback_link, ref_code]
         rendered_body = (
             f"Hi {name}, you left items in your cart ({amount_str}). "
-            f"Complete checkout with your reserved discount{disc_text}: {effective_link}. (Ref: #RNV-{ref_code})"
+            f"Complete checkout with your reserved discount{disc_text}: {fallback_link}. "
+            f"(Ref: #RNV-{ref_code})"
         )
-    elif is_recurring_mandate_case(state) and "RBI" in raw_message:
-        template_name = WhatsAppHSMTemplate.RBI_PRE_DEBIT
-        sub_id = state.source_id or state.case_id[-8:]
-        target_date = (state.next_retry_at or datetime.now()).strftime("%d %b %Y")
-        params = [name, amount_str, target_date, sub_id, ref_code]
-        rendered_body = raw_message
+    elif is_subscription_case(state):
+        template_name = WhatsAppHSMTemplate.SUBSCRIPTION_UPDATE
+        sub_id = state.subscription_id or state.source_id or state.case_id[-8:]
+        params = [name, amount_str, sub_id, fallback_link, ref_code]
+        rendered_body = (
+            f"Hi {name}, your subscription payment of {amount_str} needs attention. "
+            f"Update your payment method or retry here: {fallback_link}. (Ref: #RNV-{ref_code})"
+        )
     else:
         template_name = WhatsAppHSMTemplate.PAYMENT_REMINDER
-        params = [name, amount_str, effective_link or "Payment Link", ref_code]
+        params = [name, amount_str, fallback_link, ref_code]
         rendered_body = raw_message
 
     return {
@@ -233,24 +168,17 @@ def build_whatsapp_payload(
     }
 
 
-# =====================================================================
-# 4. Shared Salary Milestone Calculation
-# =====================================================================
-
-def calculate_salary_milestones(ref_date: Optional[date] = None) -> list[date]:
-    """
-    Returns upcoming salary milestone dates (1st, 15th, and last Friday of the month).
-    If no remaining milestones in current month, rolls to 1st of next month.
-    """
+def calculate_payday_milestones(ref_date: Optional[date] = None) -> list[date]:
+    """Upcoming payday-style milestones: 1st, 15th, and last Friday."""
     ref = ref_date or date.today()
     year, month = ref.year, ref.month
     milestones: list[date] = []
 
-    for day in [1, 15]:
+    for day in (1, 15):
         try:
-            d = date(year, month, day)
-            if d > ref:
-                milestones.append(d)
+            candidate = date(year, month, day)
+            if candidate > ref:
+                milestones.append(candidate)
         except ValueError:
             pass
 
@@ -266,32 +194,16 @@ def calculate_salary_milestones(ref_date: Optional[date] = None) -> list[date]:
         next_month = month + 1 if month < 12 else 1
         next_year = year if month < 12 else year + 1
         milestones = [date(next_year, next_month, 1)]
-
     return milestones
 
 
-# =====================================================================
-# 5. Margin-Safe Bell-Curve Discount Policy & Anti-Gaming
-# =====================================================================
-
 def get_bell_curve_discount(state: RecoveryState) -> float:
-    """
-    Evaluates and idempotently locks a right-skewed bell-curve discount for the case.
-    Protects margins so that the vast majority receive low/baseline concessions:
-      - 65% get settings.min_discount (e.g. 5%)
-      - 22% get a modest incentive (e.g. 10%)
-      - 10% get a high incentive (e.g. 15% - 20%)
-      -  3% get the rare maximum tail (up to settings.max_discount, e.g. 25% - 30%)
-
-    Anti-Gaming: Idempotently locks the approved discount into state.case_metadata["eligible_discount"].
-    Subsequent haggles by the customer return this pre-locked ceiling.
-    """
+    """Idempotently lock a right-skewed, margin-safe checkout concession."""
     meta = state.case_metadata or {}
     if "eligible_discount" in meta:
         return float(meta["eligible_discount"])
 
-    # Disallow discounts on corporate invoices or recurring mandate renewals
-    if state.case_type not in ["abandoned_checkout"]:
+    if state.case_type not in {"abandoned_checkout"}:
         return 0.0
 
     min_d = float(settings.min_discount)
@@ -303,7 +215,10 @@ def get_bell_curve_discount(state: RecoveryState) -> float:
     elif bucket == "low":
         discount = round(random.uniform(min_d, min_d + (max_d - min_d) * 0.25), 0)
     elif bucket == "mid":
-        discount = round(random.uniform(min_d + (max_d - min_d) * 0.25, min_d + (max_d - min_d) * 0.60), 0)
+        discount = round(
+            random.uniform(min_d + (max_d - min_d) * 0.25, min_d + (max_d - min_d) * 0.60),
+            0,
+        )
     else:
         discount = round(random.uniform(min_d + (max_d - min_d) * 0.60, max_d), 0)
 

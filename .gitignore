@@ -19,10 +19,11 @@ uv.lock
 .idea/
 
 *.env 
+.opencode/
+opencode.json
 backend/src/shapes 
 backend/data 
 *.log 
-.env.example 
 backend/.env.prod
 *.sqlite
 *.sqlite-shm

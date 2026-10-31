@@ -21,6 +21,7 @@ for p in [str(SRC_DIR), str(BACKEND_DIR)]:
 
 from agent.graph import get_compiled_agent
 from agent.prompts import get_escalation_tone
+from config.config import settings
 from config.db import AsyncSessionLocal, _init_db
 from models.models import RecoveryState
 from service.states import load_state, save_state
@@ -29,16 +30,17 @@ from tests.common import GREEN, RESET, print_banner
 
 async def test_overdue_invoice_case():
     print_banner("3. B2B Commercial Overdue Invoice Recovery")
+    settings.demo_mode = True
     _init_db()
     case_id = f"test_inv_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:4]}"
 
     async with AsyncSessionLocal() as db:
         inv_case = RecoveryState(
             case_id=case_id,
-            source_id="inv_mock_999",
+            source_id="INV2-999",
             case_type="overdue_invoice",
-            amount_inr=150000.0,
-            customer={"name": "Acme Corp AP", "email": "ap@acme.com", "contact": "+919876543210"},
+            amount=4800.0,
+            customer={"name": "Acme Corp AP", "email": "ap@acme.com", "contact": "+14155550123"},
             failure_reason="Invoice overdue by 15 days",
             error_details={},
             case_metadata={"invoice_number": "INV-2026-8888", "po_number": "PO-4421"},
