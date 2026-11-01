@@ -187,6 +187,16 @@ The return URL must point at the Renvue backend. If another app owns that port, 
 
 Verified sandbox capture (2026-10-31): order `79239162G4187994B` → capture `52M84231CC782152A`, status `COMPLETED`, `$10.00 USD`.
 
+Verified sandbox recovery (2026-11-01):
+
+- Simulated failed payment → case `failed_1793526831_992` ($125.00 USD)
+- Policy `rules-v0` → `retry_payday`; guardrails passed
+- PayPal order `43F2483513474512X` → buyer approval → capture `1TY06259TY549621D`, status `COMPLETED`
+- Case marked `recovered`; dashboard recovered total `$125.00 USD`
+- Signed `CHECKOUT.ORDER.APPROVED` and `PAYMENT.CAPTURE.COMPLETED` webhooks verified against the registered webhook and de-duplicated
+
+The failure event was seeded by the demo simulator. The order, buyer approval, capture, and webhooks are real PayPal sandbox activity.
+
 ## Tests
 
 Six regression suites cover the lifecycle, promise-to-pay, B2B invoices, subscriptions, checkout concessions, and webhook security:
