@@ -143,6 +143,34 @@ def _recovered_amount(state: RecoveryState, resource: dict[str, Any], etype: str
     return float(state.amount or 0.0)
 
 
+def _apply_recovery_ids(
+    state: RecoveryState, resource: dict[str, Any], etype: str
+) -> None:
+    """Keep the real recovery order/capture on the case.
+
+    The original failed order stays available as ``source_id``; these fields
+    point at the successful recovery so later webhooks can match it directly.
+    """
+    related = (resource.get("supplementary_data") or {}).get("related_ids") or {}
+    order_id = related.get("order_id")
+    if order_id:
+        state.paypal_order_id = str(order_id)
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata["recovery_order_id"] = str(order_id)
+
+    if etype.startswith("PAYMENT.CAPTURE") and resource.get("id"):
+        state.capture_id = str(resource["id"])
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata["recovery_capture_id"] = str(resource["id"])
+    elif etype == "CHECKOUT.ORDER.COMPLETED" and resource.get("id"):
+        state.paypal_order_id = str(resource["id"])
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata["recovery_order_id"] = str(resource["id"])
+
+
 async def _mark_recovered(
     db: AsyncSession,
     state: RecoveryState,
@@ -151,6 +179,7 @@ async def _mark_recovered(
     message: str,
 ) -> str:
     amount = _recovered_amount(state, resource, etype)
+    _apply_recovery_ids(state, resource, etype)
     state.recovery_status = "recovered"
     state.recovered_amount = amount
     state.next_retry_at = None
@@ -235,6 +264,11 @@ async def _handle_approved_order(db: AsyncSession, event: dict[str, Any]) -> str
         return "Order approval ignored: no active Renvue case."
 
     order_id = ids.get("order_id")
+    if order_id:
+        state.paypal_order_id = order_id
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata["recovery_order_id"] = order_id
     state.recovery_status = "in_progress"
     state.next_retry_at = None
     _audit(state, "checkout_order_approved", "Buyer approved the PayPal order. Capturing payment.")

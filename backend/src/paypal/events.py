@@ -29,8 +29,14 @@ def event_resource(event: dict[str, Any]) -> dict[str, Any]:
 
 def _value(amount: Any) -> tuple[float, str]:
     if isinstance(amount, dict):
+        # Orders v2 uses {value, currency_code}; the webhook simulator and the
+        # legacy Payments API use {total, currency}. Accept both shapes.
+        raw = amount.get("value")
+        if raw is None:
+            raw = amount.get("total")
+        currency = amount.get("currency_code") or amount.get("currency") or "USD"
         try:
-            return float(amount.get("value", 0.0)), str(amount.get("currency_code") or "USD").upper()
+            return float(raw or 0.0), str(currency).upper()
         except (TypeError, ValueError):
             pass
     return 0.0, "USD"
