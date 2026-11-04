@@ -1,12 +1,13 @@
 """
 Renvue Master Demo & Feature Regression Test Runner.
-Orchestrates the 6 domain-specific test suites from `tests/`:
+Orchestrates the 7 domain-specific test suites from `tests/`:
 1. Lifecycle & Stopping Rules (tests/test_lifecycle.py)
 2. Promise-To-Pay & Grace Period Validation (tests/test_promise_to_pay.py)
 3. B2B Commercial Overdue Invoices (tests/test_b2b_invoices.py)
 4. Recurring Subscriptions & PayPal Update-Method Links (tests/test_subscriptions.py)
 5. Abandoned Checkout Concessions & Anti-Gaming (tests/test_checkout_concessions.py)
 6. PayPal Webhook Signature Verification & Idempotency (tests/test_webhook_security.py)
+7. ML Simulator, Policy Contracts & Agent Lab API (tests/test_ml_policy.py)
 
 Run directly via:
     uv run python src/tests/runner.py
@@ -31,6 +32,13 @@ from tests.test_b2b_invoices import test_overdue_invoice_case
 from tests.test_subscriptions import test_recurring_subscription_case
 from tests.test_checkout_concessions import test_abandoned_checkout_bell_curve_discount
 from tests.test_webhook_security import test_paypal_webhook_signature_verification
+from tests.test_ml_policy import (
+    test_bundle_artifact_loads_and_serves_ml,
+    test_ev_policy_respects_contract,
+    test_guardrails_keep_final_authority,
+    test_policy_score_api,
+    test_simulator_is_deterministic_and_leak_free,
+)
 
 
 async def main():
@@ -43,9 +51,14 @@ async def main():
         await test_recurring_subscription_case()
         await test_abandoned_checkout_bell_curve_discount()
         await test_paypal_webhook_signature_verification()
+        test_simulator_is_deterministic_and_leak_free()
+        test_ev_policy_respects_contract()
+        test_guardrails_keep_final_authority()
+        test_bundle_artifact_loads_and_serves_ml()
+        await test_policy_score_api()
         elapsed = (datetime.now() - start).total_seconds()
         print(f"\n{GREEN}{BOLD}{'='*70}{RESET}")
-        print(f"{GREEN}{BOLD} ALL 6 REGRESSION SUITES PASSED CLEANLY in {elapsed:.2f}s!{RESET}")
+        print(f"{GREEN}{BOLD} ALL 7 REGRESSION SUITES PASSED CLEANLY in {elapsed:.2f}s!{RESET}")
         print(f"{GREEN}{BOLD}{'='*70}{RESET}\n")
     except AssertionError as e:
         print(f"\n{RED}{BOLD}❌ REGRESSION ASSERTION FAILED:{RESET} {e}")

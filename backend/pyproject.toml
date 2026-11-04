@@ -27,6 +27,12 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.2",
     "taskiq>=0.12.6",
     "taskiq-redis>=1.2.3",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "scikit-learn>=1.9.1",
+    "lightgbm>=4.7.0",
+    "shap>=0.54.1",
+    "joblib>=1.6.0",
 ]
 
 

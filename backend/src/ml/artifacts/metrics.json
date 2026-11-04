@@ -1,0 +1,525 @@
+{
+  "generated_at": "2026-11-02T21:33:09",
+  "dataset": {
+    "seed": 42,
+    "generated_at": "2026-11-02T21:26:59",
+    "train_rows": 54000,
+    "val_rows": 6000,
+    "test_episodes": 10000,
+    "test_potential_rows": 90000,
+    "rct_rows": 12000,
+    "mechanisms": [
+      "reason",
+      "persona"
+    ],
+    "holdout_personas": {
+      "reason": [
+        "serial_ptp"
+      ],
+      "persona": [
+        "dispute_prone"
+      ]
+    },
+    "train_personas": [
+      "b2b_ap",
+      "cash_strapped",
+      "expired_card",
+      "hard_decline",
+      "high_value",
+      "reliable_forgetful"
+    ],
+    "action_set": [
+      "no_contact",
+      "email_link",
+      "sms_link",
+      "paypal_invoice_reminder",
+      "retry_now",
+      "retry_payday",
+      "update_method_link",
+      "discount_link",
+      "human_escalation"
+    ],
+    "contract": "Observation -> eligible Play -> guardrails -> one action",
+    "dataset_hash": "68e446fa555a07de"
+  },
+  "model": {
+    "auroc": 0.7445520403746355,
+    "auprc": 0.3561561446998959,
+    "brier": 0.12878653565004394,
+    "ece": 0.0027935423987578553,
+    "val_paid_rate": 0.1775,
+    "train_paid_rate": 0.17546296296296296,
+    "train_rows": 54000,
+    "val_rows": 6000
+  },
+  "calibration_rct": {
+    "rows": 12000,
+    "auroc": 0.7714,
+    "auprc": 0.3103,
+    "brier": 0.0956,
+    "ece": 0.0139,
+    "paid_rate": 0.1222
+  },
+  "policies": {
+    "no_contact": {
+      "cases": 10000,
+      "net_per_1000": 30224.34,
+      "net_per_1000_ci": [
+        26789.97,
+        34085.57
+      ],
+      "recovery_rate_pct": 7.52,
+      "recovery_rate_ci": [
+        7.0,
+        8.05
+      ],
+      "total_recovered": 303743.07,
+      "cost_per_recovery": 1.99,
+      "avg_time_to_pay_days": NaN,
+      "opt_out_pct": 0.23,
+      "dispute_pct": 0.2,
+      "guardrail_changes": 0,
+      "action_mix": {
+        "no_contact": 100.0
+      }
+    },
+    "rules": {
+      "cases": 10000,
+      "net_per_1000": 120304.74,
+      "net_per_1000_ci": [
+        111470.35,
+        129547.98
+      ],
+      "recovery_rate_pct": 23.45,
+      "recovery_rate_ci": [
+        22.61,
+        24.27
+      ],
+      "total_recovered": 1208016.18,
+      "cost_per_recovery": 2.12,
+      "avg_time_to_pay_days": NaN,
+      "opt_out_pct": 0.36,
+      "dispute_pct": 0.38,
+      "guardrail_changes": 2292,
+      "action_mix": {
+        "discount_link": 3.8,
+        "email_link": 22.8,
+        "human_escalation": 0.2,
+        "paypal_invoice_reminder": 13.3,
+        "retry_now": 36.4,
+        "retry_payday": 10.6,
+        "update_method_link": 13.1
+      }
+    },
+    "ml_ev": {
+      "cases": 10000,
+      "net_per_1000": 120311.49,
+      "net_per_1000_ci": [
+        111581.82,
+        129632.67
+      ],
+      "recovery_rate_pct": 23.62,
+      "recovery_rate_ci": [
+        22.86,
+        24.46
+      ],
+      "total_recovered": 1207617.51,
+      "cost_per_recovery": 1.91,
+      "avg_time_to_pay_days": NaN,
+      "opt_out_pct": 0.52,
+      "dispute_pct": 0.42,
+      "guardrail_changes": 1164,
+      "action_mix": {
+        "discount_link": 1.6,
+        "email_link": 31.6,
+        "human_escalation": 0.3,
+        "no_contact": 0.4,
+        "paypal_invoice_reminder": 13.1,
+        "retry_now": 10.0,
+        "retry_payday": 25.9,
+        "sms_link": 3.9,
+        "update_method_link": 13.1
+      }
+    },
+    "ml_no_guardrails": {
+      "cases": 10000,
+      "net_per_1000": 120614.03,
+      "net_per_1000_ci": [
+        111898.02,
+        129813.07
+      ],
+      "recovery_rate_pct": 23.81,
+      "recovery_rate_ci": [
+        23.04,
+        24.65
+      ],
+      "total_recovered": 1210436.57,
+      "cost_per_recovery": 1.8,
+      "avg_time_to_pay_days": NaN,
+      "opt_out_pct": 0.52,
+      "dispute_pct": 0.42,
+      "guardrail_changes": 0,
+      "action_mix": {
+        "discount_link": 1.6,
+        "email_link": 20.2,
+        "human_escalation": 0.2,
+        "no_contact": 0.6,
+        "paypal_invoice_reminder": 13.1,
+        "retry_now": 10.0,
+        "retry_payday": 25.9,
+        "sms_link": 3.9,
+        "update_method_link": 24.5
+      }
+    },
+    "oracle": {
+      "cases": 10000,
+      "net_per_1000": 124081.21,
+      "net_per_1000_ci": [
+        115175.8,
+        133106.05
+      ],
+      "recovery_rate_pct": 25.08,
+      "recovery_rate_ci": [
+        24.31,
+        25.9
+      ],
+      "total_recovered": 1242911.45,
+      "cost_per_recovery": 0.84,
+      "avg_time_to_pay_days": NaN,
+      "opt_out_pct": 0.25,
+      "dispute_pct": 0.22,
+      "guardrail_changes": 0,
+      "action_mix": {
+        "discount_link": 2.8,
+        "email_link": 3.6,
+        "no_contact": 9.3,
+        "paypal_invoice_reminder": 3.3,
+        "retry_now": 1.1,
+        "retry_payday": 45.3,
+        "sms_link": 0.1,
+        "update_method_link": 34.4
+      }
+    }
+  },
+  "by_mechanism": {
+    "reason": {
+      "no_contact": {
+        "cases": 5000,
+        "net_per_1000": 30288.92,
+        "net_per_1000_ci": [
+          24358.88,
+          36624.93
+        ],
+        "recovery_rate_pct": 7.1,
+        "recovery_rate_ci": [
+          6.4,
+          7.79
+        ],
+        "total_recovered": 152299.05,
+        "cost_per_recovery": 2.41,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.24,
+        "dispute_pct": 0.26,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "no_contact": 100.0
+        }
+      },
+      "rules": {
+        "cases": 5000,
+        "net_per_1000": 108011.64,
+        "net_per_1000_ci": [
+          97528.26,
+          120911.15
+        ],
+        "recovery_rate_pct": 23.74,
+        "recovery_rate_ci": [
+          22.62,
+          24.95
+        ],
+        "total_recovered": 542749.71,
+        "cost_per_recovery": 2.27,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.42,
+        "dispute_pct": 0.44,
+        "guardrail_changes": 2292,
+        "action_mix": {
+          "discount_link": 4.1,
+          "email_link": 22.2,
+          "human_escalation": 0.2,
+          "paypal_invoice_reminder": 13.1,
+          "retry_now": 36.3,
+          "retry_payday": 11.0,
+          "update_method_link": 13.2
+        }
+      },
+      "ml_ev": {
+        "cases": 5000,
+        "net_per_1000": 106695.1,
+        "net_per_1000_ci": [
+          96068.44,
+          119478.82
+        ],
+        "recovery_rate_pct": 23.38,
+        "recovery_rate_ci": [
+          22.28,
+          24.59
+        ],
+        "total_recovered": 535946.9,
+        "cost_per_recovery": 2.11,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.58,
+        "dispute_pct": 0.48,
+        "guardrail_changes": 1164,
+        "action_mix": {
+          "discount_link": 1.8,
+          "email_link": 30.8,
+          "human_escalation": 0.4,
+          "no_contact": 0.4,
+          "paypal_invoice_reminder": 12.9,
+          "retry_now": 10.1,
+          "retry_payday": 26.5,
+          "sms_link": 4.0,
+          "update_method_link": 13.2
+        }
+      },
+      "ml_no_guardrails": {
+        "cases": 5000,
+        "net_per_1000": 107075.64,
+        "net_per_1000_ci": [
+          96403.75,
+          119909.26
+        ],
+        "recovery_rate_pct": 23.64,
+        "recovery_rate_ci": [
+          22.55,
+          24.84
+        ],
+        "total_recovered": 537740.54,
+        "cost_per_recovery": 2.0,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.58,
+        "dispute_pct": 0.48,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "discount_link": 1.8,
+          "email_link": 19.9,
+          "human_escalation": 0.2,
+          "no_contact": 0.6,
+          "paypal_invoice_reminder": 12.9,
+          "retry_now": 10.1,
+          "retry_payday": 26.5,
+          "sms_link": 4.0,
+          "update_method_link": 24.1
+        }
+      },
+      "oracle": {
+        "cases": 5000,
+        "net_per_1000": 111025.25,
+        "net_per_1000_ci": [
+          100262.57,
+          124151.17
+        ],
+        "recovery_rate_pct": 24.9,
+        "recovery_rate_ci": [
+          23.74,
+          26.21
+        ],
+        "total_recovered": 556339.25,
+        "cost_per_recovery": 0.97,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.28,
+        "dispute_pct": 0.3,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "discount_link": 3.0,
+          "email_link": 3.5,
+          "no_contact": 10.3,
+          "paypal_invoice_reminder": 2.1,
+          "retry_now": 1.3,
+          "retry_payday": 45.8,
+          "sms_link": 0.2,
+          "update_method_link": 33.8
+        }
+      }
+    },
+    "persona": {
+      "no_contact": {
+        "cases": 5000,
+        "net_per_1000": 30159.76,
+        "net_per_1000_ci": [
+          25343.12,
+          35599.47
+        ],
+        "recovery_rate_pct": 7.94,
+        "recovery_rate_ci": [
+          7.24,
+          8.64
+        ],
+        "total_recovered": 151444.02,
+        "cost_per_recovery": 1.63,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.22,
+        "dispute_pct": 0.14,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "no_contact": 100.0
+        }
+      },
+      "rules": {
+        "cases": 5000,
+        "net_per_1000": 132597.85,
+        "net_per_1000_ci": [
+          119742.37,
+          146566.42
+        ],
+        "recovery_rate_pct": 23.16,
+        "recovery_rate_ci": [
+          22.04,
+          24.38
+        ],
+        "total_recovered": 665266.47,
+        "cost_per_recovery": 1.97,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.3,
+        "dispute_pct": 0.32,
+        "guardrail_changes": 2292,
+        "action_mix": {
+          "discount_link": 3.5,
+          "email_link": 23.3,
+          "human_escalation": 0.2,
+          "paypal_invoice_reminder": 13.4,
+          "retry_now": 36.5,
+          "retry_payday": 10.2,
+          "update_method_link": 13.0
+        }
+      },
+      "ml_ev": {
+        "cases": 5000,
+        "net_per_1000": 133927.89,
+        "net_per_1000_ci": [
+          121072.78,
+          147407.66
+        ],
+        "recovery_rate_pct": 23.86,
+        "recovery_rate_ci": [
+          22.74,
+          25.04
+        ],
+        "total_recovered": 671670.61,
+        "cost_per_recovery": 1.7,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.46,
+        "dispute_pct": 0.36,
+        "guardrail_changes": 1164,
+        "action_mix": {
+          "discount_link": 1.5,
+          "email_link": 32.5,
+          "human_escalation": 0.3,
+          "no_contact": 0.5,
+          "paypal_invoice_reminder": 13.2,
+          "retry_now": 9.9,
+          "retry_payday": 25.2,
+          "sms_link": 3.8,
+          "update_method_link": 13.0
+        }
+      },
+      "ml_no_guardrails": {
+        "cases": 5000,
+        "net_per_1000": 134152.41,
+        "net_per_1000_ci": [
+          121338.89,
+          147576.88
+        ],
+        "recovery_rate_pct": 23.98,
+        "recovery_rate_ci": [
+          22.84,
+          25.18
+        ],
+        "total_recovered": 672696.03,
+        "cost_per_recovery": 1.61,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.46,
+        "dispute_pct": 0.36,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "discount_link": 1.5,
+          "email_link": 20.5,
+          "human_escalation": 0.2,
+          "no_contact": 0.6,
+          "paypal_invoice_reminder": 13.2,
+          "retry_now": 9.9,
+          "retry_payday": 25.2,
+          "sms_link": 3.8,
+          "update_method_link": 25.0
+        }
+      },
+      "oracle": {
+        "cases": 5000,
+        "net_per_1000": 137137.16,
+        "net_per_1000_ci": [
+          124008.54,
+          150743.81
+        ],
+        "recovery_rate_pct": 25.26,
+        "recovery_rate_ci": [
+          24.09,
+          26.47
+        ],
+        "total_recovered": 686572.2,
+        "cost_per_recovery": 0.7,
+        "avg_time_to_pay_days": NaN,
+        "opt_out_pct": 0.22,
+        "dispute_pct": 0.14,
+        "guardrail_changes": 0,
+        "action_mix": {
+          "discount_link": 2.6,
+          "email_link": 3.7,
+          "no_contact": 8.2,
+          "paypal_invoice_reminder": 4.6,
+          "retry_now": 0.9,
+          "retry_payday": 44.9,
+          "sms_link": 0.1,
+          "update_method_link": 35.0
+        }
+      }
+    }
+  },
+  "lift": {
+    "ml_vs_no_contact_per_1000": 90087.15,
+    "ml_vs_rules_per_1000": 6.75,
+    "ml_vs_rules_ci": [
+      -877.52,
+      979.73
+    ],
+    "rules_vs_no_contact_per_1000": 90080.4,
+    "oracle_gap_closed_pct": 0.18
+  },
+  "sensitivity": {
+    "optimistic": {
+      "no_contact": 32812.94,
+      "rules": 136685.67,
+      "ml_ev": 136155.84,
+      "oracle": 140219.62,
+      "ml_rank": 2
+    },
+    "base": {
+      "no_contact": 33894.06,
+      "rules": 122222.96,
+      "ml_ev": 121830.01,
+      "oracle": 126081.72,
+      "ml_rank": 2
+    },
+    "pessimistic": {
+      "no_contact": 37015.73,
+      "rules": 112439.7,
+      "ml_ev": 111969.39,
+      "oracle": 116436.3,
+      "ml_rank": 2
+    }
+  },
+  "guardrails": {
+    "ml_changes": 1164,
+    "ml_change_pct": 11.64
+  }
+}

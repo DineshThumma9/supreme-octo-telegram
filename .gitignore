@@ -29,3 +29,4 @@ backend/.env.prod
 *.sqlite-shm
 *.sqlite-wal
 *.db
+plan.md 

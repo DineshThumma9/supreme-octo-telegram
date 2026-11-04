@@ -21,9 +21,10 @@ from config.db import AsyncSessionLocal
 from config.logger import get_logger
 from models.models import RecoveryState
 from models.schema import AuditEntry
-from policy.baseline import eligible_plays, observation_from_state, policy
+from policy.baseline import eligible_plays, observation_from_state
 from policy.guardrails import apply_guardrails
 from policy.interfaces import Action, Play
+from ml.runtime import decide as decide_policy
 from service.broadcast import broadcast_case_update
 from service.compliance import (
     adjust_for_contact_window,
@@ -346,7 +347,8 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
         return rs
 
     obs = observation_from_state(rs)
-    proposed = policy.act(obs)
+    decision = decide_policy(rs, obs)
+    proposed = decision.action
     guard = apply_guardrails(rs, obs, proposed)
     approved = guard.action
     decision_id = None
@@ -361,6 +363,14 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                 approved,
                 guard.result,
                 eligible_plays(obs),
+                alternatives=decision.alternatives,
+                p_pay=decision.p_pay,
+                expected_recovered=decision.expected_recovered,
+                expected_cost=decision.expected_cost,
+                expected_net=decision.expected_net,
+                policy_version=decision.policy_version,
+                model_version=decision.model_version,
+                exploration=decision.exploration,
             )
         except Exception as exc:
             logger.warning("[DECISION] Could not persist decision log: %s", exc)

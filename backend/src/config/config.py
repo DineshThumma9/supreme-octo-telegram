@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     port: int = 8000
     max_grace_period: int = 7
 
+    # Recovery policy: auto loads the trained artifact when present, otherwise
+    # serves the deterministic rules baseline. Set to "rules" to force it.
+    policy_engine: str = Field(default="auto", alias="POLICY_ENGINE")
+    policy_exploration: float = Field(default=0.0, alias="POLICY_EXPLORATION")
+
     # Global outreach window, expressed in the merchant's local clock.
     contact_window_start_hour: int = Field(default=9, alias="CONTACT_WINDOW_START_HOUR")
     contact_window_end_hour: int = Field(default=21, alias="CONTACT_WINDOW_END_HOUR")

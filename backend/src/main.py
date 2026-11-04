@@ -21,6 +21,7 @@ from agent.utils import get_llm
 from agent.graph import get_compiled_agent
 from router.apis import api_router
 from router.listeners import router
+from router.policy import router as policy_router
 from router.simulate import router as sim_router
 
 # Initialize unified logging handlers
@@ -92,6 +93,7 @@ app.include_router(router)
 app.include_router(sim_router)
 app.include_router(api_router)
 app.include_router(stream_router)
+app.include_router(policy_router)
 
 
 if __name__ == "__main__":

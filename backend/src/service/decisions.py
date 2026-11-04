@@ -32,6 +32,14 @@ async def log_decision(
     guardrail_result: str,
     eligible: list[Play],
     trigger_event_id: str | None = None,
+    alternatives: dict | None = None,
+    p_pay: float | None = None,
+    expected_recovered: float | None = None,
+    expected_cost: float | None = None,
+    expected_net: float | None = None,
+    policy_version: str | None = None,
+    model_version: str | None = None,
+    exploration: bool = False,
 ) -> str:
     decision_id = f"dec_{uuid.uuid4().hex}"
     snapshot, snapshot_hash = _snapshot(obs)
@@ -44,10 +52,15 @@ async def log_decision(
         eligible_actions_json=[play.value for play in eligible],
         proposed_action=proposed.play.value,
         approved_action=approved.play.value,
-        alternatives_json={play.value: 0.0 for play in eligible},
+        p_pay=p_pay,
+        expected_recovered=expected_recovered,
+        expected_cost=expected_cost,
+        expected_net=expected_net,
+        alternatives_json=alternatives or {play.value: 0.0 for play in eligible},
+        exploration=exploration,
         guardrail_result=guardrail_result,
-        policy_version=_policy.policy_version,
-        model_version="none",
+        policy_version=policy_version or _policy.policy_version,
+        model_version=model_version or "none",
     )
     db.add(entry)
     await db.commit()
