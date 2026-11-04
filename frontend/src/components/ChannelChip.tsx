@@ -42,20 +42,20 @@ export const CHANNEL_LABEL: Record<string, string> = {
   send_whatsapp_msg:   'WhatsApp',
   send_email_reminder: 'Email',
   get_voice_call:      'Voice',
-  create_payment_link: 'Payment Link',
+  create_payment_link: 'Payment link',
   escalate_to_human:   'Escalated',
-  log_promise_to_pay:  'Promise',
-  get_next_payday_date:'Payday',
+  log_promise_to_pay:  'Promise to pay',
+  get_next_payday_date:'Payday signal',
   complete_case:       'Completed',
-  play_email_link:     'Email Link',
+  play_email_link:     'Email link',
   play_sms_link:       'SMS / WhatsApp',
-  play_paypal_invoice_reminder: 'Invoice Reminder',
-  play_retry_now:      'Retry Now',
-  play_retry_payday:   'Retry Payday',
-  play_update_method_link: 'Update Method',
-  play_discount_link:  'Discount Link',
+  play_paypal_invoice_reminder: 'Invoice reminder',
+  play_retry_now:      'Retry now',
+  play_retry_payday:   'Retry payday',
+  play_update_method_link: 'Update method',
+  play_discount_link:  'Discount link',
   play_human_escalation: 'Escalated',
-  play_no_contact:     'No Contact',
+  play_no_contact:     'No contact',
   contact_window_deferred: 'Deferred',
   payment_recovered:   'Recovered',
 }
@@ -66,7 +66,7 @@ export function ChannelChip({ action }: { action: string | null }) {
   const label = CHANNEL_LABEL[action] ?? action.replace(/_/g, ' ')
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
-      <Icon className="w-3.5 h-3.5 text-zinc-500" />
+      <Icon className="w-3.5 h-3.5 text-zinc-500 shrink-0" strokeWidth={1.5} />
       <span>{label}</span>
     </span>
   )

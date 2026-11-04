@@ -1,15 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
 
+  :root {
+    /* Graphite ramp — dark, slight warm-neutral tint toward a trading back-office */
+    --bg-deep:    #0e0e10;
+    --bg-page:    #131315;
+    --bg-card:    #18181b;
+    --bg-raised:  #232326;
+    --hairline:   rgba(237,237,237,0.07);
+
+    --text-primary:   #ededed;
+    --text-secondary: #a1a1a6;
+    --text-muted:     #6b6b72;
+
+    /* One accent: amber — money, risk, urgency */
+    --accent:         #d97706;
+    --accent-muted:   #92400e;
+    --accent-surface: rgba(217,119,6,0.08);
+
+    /* Semantic */
+    --positive:  #4cc38a;
+    --negative:  #e5484d;
+  }
+
   body {
     margin: 0;
-    background-color: #09090d;
-    color: #e4e4e7;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
   }
 
   #root {
@@ -17,28 +40,17 @@
     min-height: 100svh;
   }
 
-  /* Sleek modern dark scrollbar across all browsers */
+  /* Tabular figures everywhere */
+  [class*="font-mono"], .tabular { font-family: 'Geist Mono', 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+
   * {
     scrollbar-width: thin;
-    scrollbar-color: #27272a transparent;
+    scrollbar-color: #2a2a2d transparent;
   }
 
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: #27272a;
-    border-radius: 9999px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
-  }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2a2d; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a3e; }
 }
 

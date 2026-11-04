@@ -1,19 +1,23 @@
 const STATUS_STYLES: Record<string, string> = {
-  escalated:   'bg-transparent text-red-400 border-red-500/30',
-  in_progress: 'bg-transparent text-amber-400 border-amber-500/30',
-  pending:     'bg-transparent text-zinc-400 border-zinc-600/40',
-  recovered:   'bg-transparent text-emerald-400 border-emerald-500/30',
-  closed:      'bg-transparent text-zinc-500 border-zinc-700/30',
+  escalated:   'text-red-400 bg-red-500/10 border-red-500/20',
+  in_progress: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  pending:     'text-zinc-400 bg-zinc-800/40 border-zinc-700/40',
+  recovered:   'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  closed:      'text-zinc-500 bg-zinc-850 border-zinc-800',
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  escalated: 'Escalated', in_progress: 'In Progress',
-  pending: 'Pending', recovered: 'Recovered', closed: 'Closed',
+  escalated: 'Escalated',
+  in_progress: 'In progress',
+  pending: 'Pending',
+  recovered: 'Recovered',
+  closed: 'Closed',
 }
 
 export function StatusPill({ status }: { status: string }) {
+  const style = STATUS_STYLES[status] ?? 'text-zinc-400 bg-zinc-800/40 border-zinc-700/40'
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium  text-${STATUS_STYLES[status] ?? 'bg-zinc-800 text-zinc-400'}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-normal border ${style}`}>
       {STATUS_LABELS[status] ?? status}
     </span>
   )

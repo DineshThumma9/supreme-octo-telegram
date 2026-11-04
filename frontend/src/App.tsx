@@ -318,34 +318,32 @@ export default function App() {
 
   return (
     <TooltipProvider delay={0}>
-      <div className="flex flex-col h-screen overflow-hidden bg-[#0a0a0c] text-zinc-300 font-sans selection:bg-indigo-500/30">
+      <div className="flex flex-col h-screen overflow-hidden text-zinc-300 font-sans" style={{ background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
         
         {/* Header (Top Navigation) */}
-        <header className="bg-[#09090d]/80 backdrop-blur sticky top-0 z-40 shrink-0 border-b border-zinc-800/60">
+        <header className="sticky top-0 z-40 shrink-0 border-b backdrop-blur-sm" style={{ background: 'rgba(19,19,21,0.9)', borderColor: 'var(--hairline)' }}>
           <div className="max-w-screen-xl mx-auto px-6 h-14 flex items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5 text-violet-500" viewBox="0 0 24 24" fill="currentColor">
+            <div className="flex items-center gap-3">
+              {/* Logo: lightning bolt mark in amber — the accent */}
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--accent)' }}>
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
-              <span className="font-semibold text-zinc-100 tracking-tight">Renvue</span>
-              <span className="text-zinc-700 mx-1">·</span>
-              <span className="text-xs text-zinc-500">Recovery Ops</span>
+              <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>Renvue</span>
+              <span style={{ color: 'var(--hairline)', fontSize: '1rem' }}>|</span>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Recovery ops</span>
             </div>
 
-            <div className="flex items-center gap-2.5">
-              {/* Sandbox Mode Badge */}
-
-
-              {/* Live SSE Stream Connection Badge */}
-              <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-800">
-                <span className="relative flex h-2 w-2">
+            <div className="flex items-center gap-2">
+              {/* Live SSE connection indicator */}
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border" style={{ background: 'var(--bg-card)', borderColor: 'var(--hairline)' }}>
+                <span className="relative flex h-1.5 w-1.5">
                   {sseConnected && (
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: 'var(--positive)' }}></span>
                   )}
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${sseConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: sseConnected ? 'var(--positive)' : '#d97706' }}></span>
                 </span>
-                <span className="text-[11px] font-medium tracking-tight text-zinc-400">
-                  {sseConnected ? 'LIVE SSE' : 'CONNECTING...'}
+                <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                  {sseConnected ? 'Live' : 'Connecting'}
                 </span>
               </div>
             </div>
@@ -364,30 +362,30 @@ export default function App() {
                        refreshData();
                    }
                 }}
-                className="bg-red-950/20 border-red-900/50 text-red-500 hover:bg-red-900/40 hover:text-red-400"
+                className="bg-transparent border border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 text-xs h-8 px-3 rounded-md transition-colors"
               >
-                Clear All Cases
+                Clear all cases
               </Button>
               <Button
                 onClick={() => onSimulate(!simulate)}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs h-9 px-4 rounded-lg shadow-sm transition-all flex items-center gap-2"
+                className="bg-zinc-100 hover:bg-white text-zinc-950 font-medium text-xs h-8 px-3 rounded-md transition-colors flex items-center gap-2"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                {simulate ? "Close Testbench" : "Simulate Failure"}
+                {simulate ? "Close testbench" : "Simulate failure"}
               </Button>
             </div>
             
             <StatsBar stats={stats} loading={loadingStats} />
 
-            {/* Ultra-Clean Simulation Testbench */}
+            {/* Simulation Testbench */}
             {simulate && (
-              <div className="mb-8 rounded-xl border border-zinc-800/80 bg-[#0d0d12] p-5 shadow-2xl transition-all">
+              <div className="mb-8 rounded-lg border border-zinc-800 bg-[#18181b] p-5 transition-colors">
                 {step === 1 ? (
                   /* Step 1: Concise Failure Scenario Selection & Trigger */
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                        Select Scenario
+                      <span className="text-xs font-medium text-zinc-400">
+                        Select scenario
                       </span>
                       <Button
                         variant="ghost"
@@ -400,97 +398,97 @@ export default function App() {
                     </div>
 
                     <RadioGroup value={eventType} onValueChange={handleScenarioChange} className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <label htmlFor="sc-soft" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
+                      <label htmlFor="sc-soft" className="border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 hover:border-zinc-700 rounded-md cursor-pointer transition-colors has-[[data-checked]]:border-amber-600/70 has-[[data-checked]]:bg-amber-500/5 block">
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
-                            <div className="text-xs font-semibold text-zinc-100">Soft Decline</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">Insufficient funds retry</p>
+                            <div className="text-xs font-medium text-zinc-200">Soft decline</div>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">Insufficient funds retry</p>
                           </div>
-                          <RadioGroupItem value="order.failed" id="sc-soft" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
+                          <RadioGroupItem value="order.failed" id="sc-soft" className="border-zinc-700 text-amber-500 h-3.5 w-3.5" />
                         </div>
                       </label>
 
-                      <label htmlFor="sc-sub" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
+                      <label htmlFor="sc-sub" className="border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 hover:border-zinc-700 rounded-md cursor-pointer transition-colors has-[[data-checked]]:border-amber-600/70 has-[[data-checked]]:bg-amber-500/5 block">
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
-                            <div className="text-xs font-semibold text-zinc-100">Subscription Failure</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">Recurring billing failure</p>
+                            <div className="text-xs font-medium text-zinc-200">Subscription failure</div>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">Recurring billing failure</p>
                           </div>
-                          <RadioGroupItem value="subscription_failed" id="sc-sub" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
+                          <RadioGroupItem value="subscription_failed" id="sc-sub" className="border-zinc-700 text-amber-500 h-3.5 w-3.5" />
                         </div>
                       </label>
 
-                      <label htmlFor="sc-invoice" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
+                      <label htmlFor="sc-invoice" className="border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 hover:border-zinc-700 rounded-md cursor-pointer transition-colors has-[[data-checked]]:border-amber-600/70 has-[[data-checked]]:bg-amber-500/5 block">
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
-                            <div className="text-xs font-semibold text-zinc-100">Overdue Invoice</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">PayPal invoice reminder</p>
+                            <div className="text-xs font-medium text-zinc-200">Overdue invoice</div>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">PayPal invoice reminder</p>
                           </div>
-                          <RadioGroupItem value="invoice_failed" id="sc-invoice" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
+                          <RadioGroupItem value="invoice_failed" id="sc-invoice" className="border-zinc-700 text-amber-500 h-3.5 w-3.5" />
                         </div>
                       </label>
 
-                      <label htmlFor="sc-cart" className="border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 rounded-xl cursor-pointer transition-all has-[[data-checked]]:border-indigo-500/60 has-[[data-checked]]:bg-indigo-500/10 block">
+                      <label htmlFor="sc-cart" className="border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 hover:border-zinc-700 rounded-md cursor-pointer transition-colors has-[[data-checked]]:border-amber-600/70 has-[[data-checked]]:bg-amber-500/5 block">
                         <div className="p-3 w-full justify-between items-center flex">
                           <div>
-                            <div className="text-xs font-semibold text-zinc-100">Abandoned Checkout</div>
-                            <p className="text-[11px] text-zinc-400 mt-0.5">Reserved discount recovery</p>
+                            <div className="text-xs font-medium text-zinc-200">Abandoned checkout</div>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">Reserved discount recovery</p>
                           </div>
-                          <RadioGroupItem value="abandoned_checkout" id="sc-cart" className="border-zinc-600 text-indigo-500 h-3.5 w-3.5" />
+                          <RadioGroupItem value="abandoned_checkout" id="sc-cart" className="border-zinc-700 text-amber-500 h-3.5 w-3.5" />
                         </div>
                       </label>
                     </RadioGroup>
 
                     {/* Horizontal Inputs Grid with Labels */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-3 border-t border-zinc-800/60">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-3 border-t border-zinc-800">
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">Customer Name</Label>
+                        <Label className="text-[11px] font-normal text-zinc-400">Customer name</Label>
                         <Input
                           value={name}
                           onChange={e => setName(e.target.value)}
-                          placeholder="e.g. Dinesh"
-                          className="bg-zinc-900 border-zinc-800 text-zinc-100 h-8 text-xs"
+                          placeholder="Alex Morgan"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-200 h-8 text-xs rounded-md"
                         />
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">Amount (USD)</Label>
+                        <Label className="text-[11px] font-normal text-zinc-400">Amount (USD)</Label>
                         <Input
                           type="number"
                           value={amount}
                           onChange={e => setAmount(Number(e.target.value))}
-                          placeholder="5000"
-                          className="bg-zinc-900 border-zinc-800 text-zinc-100 font-medium h-8 text-xs"
+                          placeholder="500"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-200 h-8 text-xs rounded-md tabular"
                         />
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">WhatsApp / Phone</Label>
+                        <Label className="text-[11px] font-normal text-zinc-400">WhatsApp / Phone</Label>
                         <Input
                           value={phone}
                           onChange={e => setPhone(e.target.value)}
                           placeholder="+14155550123"
-                          className="bg-zinc-900 border-zinc-800 text-zinc-100 h-8 text-xs"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-200 h-8 text-xs rounded-md"
                         />
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">Email Address</Label>
+                        <Label className="text-[11px] font-normal text-zinc-400">Email address</Label>
                         <Input
                           value={email}
                           onChange={e => setEmail(e.target.value)}
                           placeholder="name@example.com"
-                          className="bg-zinc-900 border-zinc-800 text-zinc-100 h-8 text-xs"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-200 h-8 text-xs rounded-md"
                         />
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label className="text-[11px] font-medium text-zinc-400">Prev Case ID</Label>
+                        <Label className="text-[11px] font-normal text-zinc-400">Previous case ID</Label>
                         <Input
                           value={resumeCaseId}
                           onChange={e => setResumeCaseId(e.target.value)}
-                          placeholder="pay_fail_... (optional)"
-                          className="bg-zinc-900 border-zinc-800 text-zinc-100 h-8 text-xs"
+                          placeholder="Optional"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-200 h-8 text-xs rounded-md"
                         />
                       </div>
                     </div>
@@ -499,26 +497,26 @@ export default function App() {
                       <Button 
                         onClick={handleFireEvent} 
                         disabled={isSimulating}
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold h-8 px-5 shadow-sm"
+                        className="bg-amber-600 hover:bg-amber-500 text-zinc-950 font-medium text-xs h-8 px-4 rounded-md transition-colors"
                       >
                         {isSimulating ? (
-                          <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> {resumeCaseId.trim() ? "Resuming..." : "Launching..."}</>
+                          <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> {resumeCaseId.trim() ? "Resuming" : "Launching"}</>
                         ) : (
-                          resumeCaseId.trim() ? "Follow Up Case" : "Run Scenario"
+                          resumeCaseId.trim() ? "Follow up case" : "Run scenario"
                         )}
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  /* Step 2: Ultra-Clean WhatsApp Bubble + 3 Options (No Header/Footer Clutter) */
+                  /* Step 2: Clean Interaction */
                   <div className="space-y-3">
-                    {/* Agent WhatsApp Outreach Message */}
+                    {/* Agent Outreach Message */}
                     <div className="flex items-start justify-between gap-3">
-                      <div className="max-w-2xl bg-[#0b3328] border border-emerald-700/40 text-emerald-50 rounded-2xl rounded-tl-sm px-4 py-2.5 text-xs shadow-sm leading-relaxed">
-                        <div className="text-[10px] font-medium text-emerald-400 mb-1 flex items-center gap-1.5">
-                          <MessageSquare className="w-3 h-3" /> WhatsApp to {name} · ${amount.toLocaleString()}
+                      <div className="max-w-2xl bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-lg p-3 text-xs leading-relaxed">
+                        <div className="text-[11px] text-zinc-400 mb-1 flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-zinc-500" /> WhatsApp to {name} · <span className="tabular">${amount.toLocaleString()}</span>
                         </div>
-                        <p className="text-xs text-emerald-50 leading-relaxed whitespace-pre-wrap">
+                        <p className="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap">
                           {latestAgentMessage}
                         </p>
                       </div>
@@ -528,8 +526,7 @@ export default function App() {
                           variant="ghost"
                           size="sm"
                           onClick={resetState}
-                          className="text-xs text-zinc-500 hover:text-zinc-200 h-7 px-2"
-                          title="Reset to New Run"
+                          className="text-xs text-zinc-400 hover:text-zinc-200 h-7 px-2"
                         >
                           <RotateCcw className="w-3.5 h-3.5 mr-1" /> New
                         </Button>
@@ -537,83 +534,79 @@ export default function App() {
                           variant="ghost"
                           size="sm"
                           onClick={() => onSimulate(false)}
-                          className="text-xs text-zinc-500 hover:text-zinc-200 h-7 px-1.5"
+                          className="text-xs text-zinc-400 hover:text-zinc-200 h-7 px-1.5"
                         >
                           <X className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </div>
 
-                    {/* Live Progress & Next Scheduled Telemetry Bar */}
+                    {/* Progress & Next Scheduled */}
                     <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-zinc-400">
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-500">Next Scheduled:</span>
-                        <span className="text-emerald-400 font-medium">
+                        <span className="text-zinc-500">Next scheduled:</span>
+                        <span className="text-zinc-300 font-medium">
                           {activeCase?.next_retry_at 
                             ? new Date(activeCase.next_retry_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
                             : (latestNextContact 
                                 ? new Date(latestNextContact).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
                                 : 'None scheduled')}
                         </span>
-                        <span className="text-zinc-600">·</span>
-                        <span className="text-zinc-400">
-                          Attempt: <strong className="text-zinc-200">{activeCase?.attempt_count ?? 1}/3</strong>
+                        <span className="text-zinc-700">·</span>
+                        <span className="text-zinc-500">
+                          Attempt: <strong className="text-zinc-300 font-normal tabular">{activeCase?.attempt_count ?? 1}/3</strong>
                         </span>
                       </div>
 
                       {activeCaseId && (
-                        <div className="flex items-center gap-1 text-[11px] text-zinc-500 font-normal">
-                          <span>Case ID: {activeCaseId}</span>
+                        <div className="flex items-center gap-1 text-[11px] text-zinc-500">
+                          <span>Case ID: <span className="font-mono text-zinc-400">{activeCaseId}</span></span>
                         </div>
                       )}
                     </div>
 
-                    {/* 3 Options: Ignore (+3 Days), Settle Payment, Reply */}
+                    {/* Options: Ignore (+3 Days), Settle Payment, Reply */}
                     {activeCase && ['recovered', 'closed', 'escalated'].includes(activeCase.recovery_status) ? (
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
-                        <span className="text-zinc-200">
+                      <div className="flex items-center justify-between p-3 rounded-md bg-zinc-900 border border-zinc-800 text-xs">
+                        <span className="text-zinc-300">
                           {activeCase.recovery_status === 'escalated'
-                            ? `⚠️ Case escalated to human support (Attempt ${activeCase.attempt_count}/3).`
-                            : `✅ Payment resolved and marked as ${activeCase.recovery_status.toUpperCase()}.`}
+                            ? `Case escalated to human support (Attempt ${activeCase.attempt_count}/3)`
+                            : `Payment resolved and marked as ${activeCase.recovery_status}`}
                         </span>
-                        <Button size="sm" onClick={resetState} className="bg-indigo-600 hover:bg-indigo-500 h-7 text-xs">
-                          New Run
+                        <Button size="sm" onClick={resetState} className="bg-zinc-100 hover:bg-white text-zinc-950 h-7 text-xs rounded-md">
+                          New run
                         </Button>
                       </div>
                     ) : (
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
-                        {/* Option 1: Ignore (+3 Days) */}
                         <Button 
                           size="sm" 
                           variant="outline" 
-                          className="bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-zinc-200 text-xs h-9 font-medium shrink-0"
+                          className="bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-xs h-8 font-normal rounded-md shrink-0"
                           onClick={() => handleAction('ignore')}
                           disabled={isSimulating}
-                          title="Simulate customer ignoring message; fast-forwards to next attempt"
                         >
                           {isSimulating ? (
                             <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                           ) : (
-                            <FastForward className="w-3.5 h-3.5 mr-1.5 text-indigo-400" />
+                            <FastForward className="w-3.5 h-3.5 mr-1.5 text-zinc-400" />
                           )}
-                          Fast-Forward (+3 Days)
+                          Fast-forward (+3 days)
                         </Button>
 
-                        {/* Option 2: Settle Payment */}
                         <Button 
                           size="sm" 
                           variant="outline" 
-                          className="bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-emerald-400 hover:text-emerald-300 text-xs h-9 font-medium shrink-0"
+                          className="bg-zinc-900 border-zinc-800 hover:bg-zinc-800 text-zinc-200 text-xs h-8 font-normal rounded-md shrink-0"
                           onClick={() => handleAction('pay')}
                           disabled={isSimulating}
                         >
-                          <CreditCard className="w-3.5 h-3.5 mr-1.5" />
-                          Settle Payment
+                          <CreditCard className="w-3.5 h-3.5 mr-1.5 text-zinc-400" />
+                          Settle payment
                         </Button>
 
-                        {/* Option 3: WhatsApp chatapp style single-span reply input */}
                         <form 
-                          className="flex-1 flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 focus-within:border-emerald-500/70"
+                          className="flex-1 flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-0.5 focus-within:border-zinc-600 transition-colors"
                           onSubmit={(e) => {
                             e.preventDefault()
                             if (replyText.trim()) handleAction('reply', replyText)
@@ -623,13 +616,13 @@ export default function App() {
                             value={replyText}
                             onChange={e => setReplyText(e.target.value)}
                             placeholder="Type customer WhatsApp reply..." 
-                            className="bg-transparent border-0 focus-visible:ring-0 text-zinc-100 h-8 text-xs px-1 shadow-none"
+                            className="bg-transparent border-0 focus-visible:ring-0 text-zinc-200 h-7 text-xs px-1 shadow-none"
                             disabled={isSimulating}
                           />
                           <Button 
                             type="submit" 
                             size="icon" 
-                            className="h-7 w-7 shrink-0 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md"
+                            className="h-6 w-6 shrink-0 bg-zinc-100 hover:bg-white text-zinc-950 rounded"
                             disabled={!replyText.trim() || isSimulating}
                           >
                             {isSimulating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
@@ -650,17 +643,17 @@ export default function App() {
 
             {/* Processing Queue */}
             <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h2 className="text-base font-semibold text-zinc-200">Active Processing Queue</h2>
+                  <h2 className="text-sm font-medium text-zinc-200">Active processing queue</h2>
                   <p className="text-xs text-zinc-500 mt-0.5">
-                    {loadingCases ? 'Loading…' : `${processingCases.length} active cases · live SSE updates`}
+                    {loadingCases ? 'Loading…' : `${processingCases.length} active cases · live updates`}
                   </p>
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="border-zinc-700 bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 h-8 text-xs"
+                  className="border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 h-7 px-2.5 text-xs rounded-md"
                   onClick={refreshData}
                 >
                   Refresh
@@ -676,9 +669,9 @@ export default function App() {
             {/* Success Section */}
             {recoveredCases.length > 0 && (
               <div className="mb-8">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h2 className="text-base font-semibold text-emerald-400">Successfully Recovered</h2>
+                    <h2 className="text-sm font-medium text-zinc-200">Successfully recovered</h2>
                     <p className="text-xs text-zinc-500 mt-0.5">
                       {recoveredCases.length} resolved cases
                     </p>
@@ -700,7 +693,7 @@ export default function App() {
             side="right" 
             showCloseButton={false} 
             style={{ width: `${drawerWidth}px`, maxWidth: '95vw' }}
-            className="bg-[#0d1117] border-l border-zinc-800 text-zinc-100 flex flex-col p-0 shadow-2xl transition-none"
+            className="bg-[#18181b] border-l border-zinc-800 text-zinc-100 flex flex-col p-0 transition-none"
           >
             <CaseDrawer
               caseId={selectedCaseId}
