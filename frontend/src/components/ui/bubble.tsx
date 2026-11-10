@@ -12,18 +12,16 @@ export function Bubble({
   ...props
 }: BubbleProps) {
   const variantStyles = {
-    // Inbound (Customer): Clean dark muted bubble from shadcn screenshot
-    inbound: "bg-[#27272a] text-zinc-100 rounded-2xl rounded-tl-sm self-start max-w-[80%]",
-    // Outbound (Agent / Primary): Clean primary blue/indigo bubble from shadcn screenshot
-    outbound: "bg-[#2563eb] text-white rounded-2xl rounded-tr-sm self-end max-w-[80%]",
-    default: "bg-[#27272a] text-zinc-100 rounded-2xl self-start max-w-[80%]",
-    primary: "bg-[#2563eb] text-white rounded-2xl self-end max-w-[80%]",
+    inbound: "bg-zinc-900 text-zinc-200 rounded-lg rounded-tl-sm self-start max-w-[80%] border border-zinc-800",
+    outbound: "bg-amber-600 text-zinc-950 rounded-lg rounded-tr-sm self-end max-w-[80%]",
+    default: "bg-zinc-900 text-zinc-200 rounded-lg self-start max-w-[80%] border border-zinc-800",
+    primary: "bg-amber-600 text-zinc-950 rounded-lg self-end max-w-[80%]",
   }
 
   return (
     <div
       className={cn(
-        "px-4 py-2.5 text-sm inline-block shadow-sm break-words",
+        "px-3 py-2 text-xs inline-block break-words",
         variantStyles[variant],
         className
       )}

@@ -453,7 +453,8 @@ def render_model_card(bundle: MLPolicyBundle, results: dict, path: Path = Path(_
         "## Model",
         "",
         f"- Name: `{bundle.version}` / `{bundle.model_version}`",
-        f"- Type: M1 calibrated LightGBM propensity + M2 LightGBM T-learner per Play",
+        "- Type: M1 calibrated LightGBM propensity + M2 LightGBM outcome model "
+        "with Play features and per-Play base rates",
         f"- Training rows: {bundle.training_rows:,} simulated decisions",
         f"- Dataset hash: `{bundle.dataset_hash}`",
         f"- Trained: {bundle.trained_at}",

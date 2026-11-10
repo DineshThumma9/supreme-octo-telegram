@@ -3,7 +3,7 @@
 ## Model
 
 - Name: `policy-0.1` / `lgbm-2026-11-02`
-- Type: M1 calibrated LightGBM propensity + M2 LightGBM T-learner per Play
+- Type: M1 calibrated LightGBM propensity + M2 LightGBM outcome model with Play features and per-Play base rates
 - Training rows: 54,000 simulated decisions
 - Dataset hash: `68e446fa555a07de`
 - Trained: 2026-11-02T15:57:06.608744+00:00

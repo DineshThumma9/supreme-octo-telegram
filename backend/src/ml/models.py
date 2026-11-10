@@ -1,7 +1,7 @@
 """Train and serve the learned recovery policy.
 
 M1: calibrated payment propensity.
-M2: T-learner expected recovered amount per Play.
+M2: LightGBM expected recovered amount, with Play as a feature.
 M4: cost-sensitive expected-value policy with optional exploration.
 """
 

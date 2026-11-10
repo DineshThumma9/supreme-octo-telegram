@@ -1,131 +1,216 @@
+import { useState, useMemo } from 'react'
+import type { Case } from '../types'
+import { fmt, fmtTs } from '../utils/formatters'
+import { TypeBadge } from './TypeBadge'
+import { StatusPill } from './StatusPill'
+import { ChannelChip } from './ChannelChip'
+import { Search, ChevronRight } from 'lucide-react'
 
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Skeleton } from "@/components/ui/skeleton"
-import type { Case } from "../types"
-import { fmt, fmtTs } from "../utils/formatters"
-import { TypeBadge } from "./TypeBadge"
-import { StatusPill } from "./StatusPill"
-import { ChannelChip } from "./ChannelChip"
-
-const STATUS_ROW_BORDER: Record<string, string> = {
-  escalated:   'border-l-2 border-l-red-500/80',
-  in_progress: 'border-l-2 border-l-amber-500/80',
-  pending:     'border-l-2 border-l-zinc-700',
-  recovered:   'border-l-2 border-l-emerald-500/80',
-  closed:      'border-l-2 border-l-zinc-800',
+interface CaseTableProps {
+  cases: Case[]
+  loading: boolean
+  onRowClick: (id: string) => void
+  showFilterTabs?: boolean
+  defaultStatusFilter?: string
 }
 
 export function CaseTable({
   cases,
   loading,
   onRowClick,
-}: {
-  cases: Case[]
-  loading: boolean
-  onRowClick: (id: string) => void
-}) {
+  showFilterTabs = true,
+  defaultStatusFilter = 'all',
+}: CaseTableProps) {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState(defaultStatusFilter)
+
+  const filteredCases = useMemo(() => {
+    return cases.filter((c) => {
+      // Status filter
+      if (statusFilter === 'escalated' && c.recovery_status !== 'escalated') return false
+      if (statusFilter === 'active' && ['escalated', 'recovered', 'closed'].includes(c.recovery_status)) return false
+      if (statusFilter === 'recovered' && c.recovery_status !== 'recovered') return false
+      if (statusFilter === 'closed' && c.recovery_status !== 'closed') return false
+
+      // Search filter
+      if (!search.trim()) return true
+      const q = search.toLowerCase()
+      const name = (c.customer?.name || '').toLowerCase()
+      const email = (c.customer?.email || '').toLowerCase()
+      const caseId = (c.case_id || '').toLowerCase()
+      const type = (c.case_type || '').toLowerCase()
+      return name.includes(q) || email.includes(q) || caseId.includes(q) || type.includes(q)
+    })
+  }, [cases, search, statusFilter])
+
+  const counts = useMemo(() => {
+    return {
+      all: cases.length,
+      escalated: cases.filter((c) => c.recovery_status === 'escalated').length,
+      active: cases.filter((c) => !['escalated', 'recovered', 'closed'].includes(c.recovery_status)).length,
+      recovered: cases.filter((c) => c.recovery_status === 'recovered').length,
+    }
+  }, [cases])
+
   return (
-    <div className="rounded-lg border border-zinc-800 overflow-hidden bg-[#18181b]">
-      <Table>
-        <TableHeader className="bg-zinc-900/80 border-b border-zinc-800">
-          <TableRow className="border-b border-zinc-800 hover:bg-transparent">
-            <TableHead className="w-12 text-xs font-normal text-zinc-400 pl-4">#</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400 min-w-[200px]">Customer</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400">Status</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400">Amount</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400">Type</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400">Channel</TableHead>
-            <TableHead className="text-xs font-normal text-zinc-400">Next scheduled</TableHead>
-            <TableHead className="w-20 text-right pr-4"></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {loading ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={i} className="border-b border-zinc-800/40">
-                <TableCell className="pl-4"><Skeleton className="h-4 w-5 bg-zinc-800" /></TableCell>
-                <TableCell>
-                  <Skeleton className="h-4 w-28 bg-zinc-800 mb-1" />
-                  <Skeleton className="h-3 w-20 bg-zinc-800/50" />
-                </TableCell>
-                <TableCell><Skeleton className="h-4 w-16 rounded bg-zinc-800" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-14 bg-zinc-800" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-20 rounded bg-zinc-800" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-16 bg-zinc-800" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-20 bg-zinc-800" /></TableCell>
-                <TableCell className="pr-4 text-right"><Skeleton className="h-6 w-14 rounded bg-zinc-800 ml-auto" /></TableCell>
-              </TableRow>
-            ))
-          ) : cases.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={8} className="py-16 text-center text-zinc-500 text-xs">
-                No cases found
-              </TableCell>
-            </TableRow>
-          ) : (
-            cases.map((c, idx) => (
-              <TableRow
-                key={c.case_id}
-                onClick={() => onRowClick(c.case_id)}
-                className={`cursor-pointer hover:bg-zinc-800/50 border-b border-zinc-800/50 transition-colors group ${STATUS_ROW_BORDER[c.recovery_status] ?? 'border-l-2 border-l-transparent'}`}
-              >
-                {/* Index */}
-                <TableCell className="pl-4 text-xs text-zinc-500 tabular font-mono">
-                  {idx + 1}
-                </TableCell>
+    <div className="rounded-lg border border-hairline bg-card overflow-hidden">
+      {/* Controls Bar */}
+      <div className="p-3 border-b border-hairline flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        {/* Status Tabs */}
+        {showFilterTabs && (
+          <div className="flex items-center gap-1 overflow-x-auto" role="tablist">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                statusFilter === 'all'
+                  ? 'bg-raised text-primary'
+                  : 'text-muted hover:text-secondary'
+              }`}
+            >
+              All <span className="tabular text-muted ml-1">{counts.all}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter('escalated')}
+              className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                statusFilter === 'escalated'
+                  ? 'bg-raised text-primary'
+                  : 'text-muted hover:text-secondary'
+              }`}
+            >
+              Needs approval <span className={`tabular ml-1 ${counts.escalated > 0 ? 'text-[#e5484d]' : 'text-muted'}`}>{counts.escalated}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter('active')}
+              className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                statusFilter === 'active'
+                  ? 'bg-raised text-primary'
+                  : 'text-muted hover:text-secondary'
+              }`}
+            >
+              Active <span className="tabular text-muted ml-1">{counts.active}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter('recovered')}
+              className={`h-7 px-2.5 rounded text-xs font-medium transition-colors ${
+                statusFilter === 'recovered'
+                  ? 'bg-raised text-primary'
+                  : 'text-muted hover:text-secondary'
+              }`}
+            >
+              Recovered <span className="tabular text-muted ml-1">{counts.recovered}</span>
+            </button>
+          </div>
+        )}
 
-                {/* Customer */}
-                <TableCell className="min-w-[200px]">
-                  <p className="text-xs font-medium text-zinc-200 truncate">{c.customer.name}</p>
-                  <p className="text-[11px] text-zinc-500 truncate mt-0.5">{c.customer.email}</p>
-                </TableCell>
+        {/* Search */}
+        <div className="relative w-full sm:w-64">
+          <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search cases…"
+            className="w-full h-7 pl-8 pr-3 rounded bg-deep border border-hairline text-xs text-primary placeholder:text-muted focus:border-focus focus:outline-none"
+          />
+        </div>
+      </div>
 
-                {/* Status */}
-                <TableCell>
-                  <StatusPill status={c.recovery_status} />
-                </TableCell>
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="border-b border-hairline text-muted">
+              <th className="py-2.5 px-4 font-normal w-12 text-muted tabular">#</th>
+              <th className="py-2.5 px-4 font-normal">Customer</th>
+              <th className="py-2.5 px-4 font-normal">Status</th>
+              <th className="py-2.5 px-4 font-normal text-right">Amount</th>
+              <th className="py-2.5 px-4 font-normal">Failure type</th>
+              <th className="py-2.5 px-4 font-normal">Channel</th>
+              <th className="py-2.5 px-4 font-normal">Next scheduled</th>
+              <th className="py-2.5 px-4 font-normal w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i} className="border-b border-hairline">
+                  <td className="py-3 px-4 text-muted tabular">{i + 1}</td>
+                  <td className="py-3 px-4">
+                    <div className="w-24 h-3 bg-raised rounded mb-1" />
+                    <div className="w-36 h-2.5 bg-raised/50 rounded" />
+                  </td>
+                  <td className="py-3 px-4"><div className="w-16 h-3 bg-raised rounded" /></td>
+                  <td className="py-3 px-4 text-right"><div className="w-12 h-3 bg-raised rounded ml-auto" /></td>
+                  <td className="py-3 px-4"><div className="w-20 h-3 bg-raised rounded" /></td>
+                  <td className="py-3 px-4"><div className="w-16 h-3 bg-raised rounded" /></td>
+                  <td className="py-3 px-4"><div className="w-24 h-3 bg-raised rounded" /></td>
+                  <td className="py-3 px-4"></td>
+                </tr>
+              ))
+            ) : filteredCases.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-12 text-center text-muted text-xs">
+                  {search ? 'No cases match your search.' : 'No cases in this view.'}
+                </td>
+              </tr>
+            ) : (
+              filteredCases.map((c, idx) => (
+                <tr
+                  key={c.case_id}
+                  onClick={() => onRowClick(c.case_id)}
+                  className="border-b border-hairline hover:bg-raised/60 transition-colors cursor-pointer group"
+                >
+                  {/* Number */}
+                  <td className="py-3 px-4 text-muted tabular">{idx + 1}</td>
 
-                {/* Amount */}
-                <TableCell className={`text-xs tabular font-medium ${c.recovery_status === 'recovered' ? 'text-emerald-400' : 'text-zinc-200'}`}>
-                  ${fmt(c.amount)}
-                </TableCell>
+                  {/* Customer */}
+                  <td className="py-3 px-4 min-w-[180px]">
+                    <div className="font-medium text-primary truncate">{c.customer.name || 'Unknown'}</div>
+                    <div className="text-[11px] text-muted truncate mt-0.5">{c.customer.email}</div>
+                  </td>
 
-                {/* Type */}
-                <TableCell>
-                  <TypeBadge type={c.case_type} />
-                </TableCell>
+                  {/* Status */}
+                  <td className="py-3 px-4">
+                    <StatusPill status={c.recovery_status} />
+                  </td>
 
-                {/* Channel */}
-                <TableCell>
-                  <ChannelChip action={c.last_action_taken} />
-                </TableCell>
+                  {/* Amount */}
+                  <td className="py-3 px-4 text-right font-medium tabular text-primary">
+                    ${fmt(c.amount)}
+                  </td>
 
-                {/* Next Scheduled */}
-                <TableCell className="text-xs text-zinc-400 tabular whitespace-nowrap">
-                  {c.next_retry_at ? fmtTs(c.next_retry_at) : (c.recovery_status === 'closed' || c.recovery_status === 'recovered' ? '—' : 'Pending')}
-                </TableCell>
+                  {/* Type */}
+                  <td className="py-3 px-4">
+                    <TypeBadge type={c.case_type} />
+                  </td>
 
-                {/* Action */}
-                <TableCell className="pr-4 text-right">
-                  <button 
-                    className="px-2 py-1 rounded bg-zinc-800/60 text-zinc-300 text-[11px] border border-zinc-700/60 opacity-0 group-hover:opacity-100 hover:bg-zinc-700 hover:text-white transition-opacity"
-                    onClick={(e) => { e.stopPropagation(); onRowClick(c.case_id); }}
-                  >
-                    Inspect
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
+                  {/* Channel */}
+                  <td className="py-3 px-4">
+                    <ChannelChip action={c.last_action_taken} />
+                  </td>
+
+                  {/* Next Scheduled */}
+                  <td className="py-3 px-4 text-muted tabular whitespace-nowrap">
+                    {c.next_retry_at ? fmtTs(c.next_retry_at) : '—'}
+                  </td>
+
+                  {/* Inspect affordance */}
+                  <td className="py-3 px-4 text-right">
+                    <ChevronRight className="w-3.5 h-3.5 text-muted group-hover:text-primary transition-colors ml-auto" />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Footer count */}
+      <div className="px-4 py-2.5 border-t border-hairline text-[11px] text-muted flex items-center justify-between">
+        <span className="tabular">
+          Showing {filteredCases.length} of {cases.length} cases
+        </span>
+      </div>
     </div>
   )
 }

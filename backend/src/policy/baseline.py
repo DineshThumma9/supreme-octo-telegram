@@ -6,6 +6,7 @@ downgrade or block it; the agent only ever executes the approved Play.
 
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timedelta
 
 from models.models import RecoveryState
@@ -89,7 +90,9 @@ def observation_from_state(state: RecoveryState) -> Observation:
         opt_out=bool(meta.get("opt_out")),
         hour_local=now.hour,
         weekday=now.weekday(),
-        days_to_month_end=max(0, (now.replace(day=28) + timedelta(days=4)).day - now.day),
+        days_to_month_end=max(
+            0, calendar.monthrange(now.year, now.month)[1] - now.day
+        ),
         payday_signal=now.day <= 3 or now.day >= 28,
         invoice_age_days=days_past_due if state.case_type == "overdue_invoice" else None,
     )

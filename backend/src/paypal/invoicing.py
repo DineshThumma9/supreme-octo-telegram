@@ -135,6 +135,11 @@ async def create_recovery_invoice(
             except PayPalAPIError as exc:
                 logger.warning("[PAYPAL] Invoice created but send failed: %s", exc)
     except PayPalAPIError as exc:
+        if not settings.demo_mode:
+            logger.error(
+                "[PAYPAL] Invoice creation failed for case %s: %s", state.case_id, exc
+            )
+            raise
         logger.error("[PAYPAL] Invoice creation failed for case %s: %s", state.case_id, exc)
         return _mock_invoice(state, amount, currency, f"API error {exc.status_code}")
 

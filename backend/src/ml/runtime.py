@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from config.config import settings
@@ -93,8 +94,19 @@ def model_info() -> dict:
     }
 
 
+def _json_safe(value):
+    """Replace non-finite floats so the API never 500s on stale artifacts."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def evaluation() -> dict | None:
     path = Path(__file__).resolve().parent / "artifacts" / "metrics.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return _json_safe(json.loads(path.read_text()))

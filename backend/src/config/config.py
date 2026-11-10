@@ -1,16 +1,104 @@
 import os
 from pathlib import Path
+from typing import Optional
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=(_ENV_FILE, ".env"), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(_ENV_FILE, ".env"),
+        extra="ignore",
+    )
 
-    mistral_api_key: str = Field(default="", alias="MISTRAL_API_KEY")
+    # LLM Provider selection & common options
+    llm_provider: str = Field(
+        default="mistral",
+        validation_alias=AliasChoices("LLM_PROVIDER", "llm_provider"),
+    )
+    llm_timeout: int = Field(
+        default=30,
+        validation_alias=AliasChoices("LLM_TIMEOUT", "llm_timeout"),
+    )
+    llm_max_tokens: Optional[int] = Field(
+        default=1024,
+        validation_alias=AliasChoices("LLM_MAX_TOKENS", "llm_max_tokens"),
+    )
+    model: str = Field(
+        default="",
+        validation_alias=AliasChoices("MODEL", "model"),
+    )
+
+    # Mistral AI
+    mistral_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MISTRAL_API_KEY", "MISTRALAI_API_KEY", "mistral_api_key"),
+    )
+    mistral_model: str = Field(
+        default="mistral-small-latest",
+        validation_alias=AliasChoices("MISTRAL_MODEL", "mistral_model"),
+    )
+
+    # Groq
+    groq_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GROQ_API_KEY", "groq_api_key"),
+    )
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile",
+        validation_alias=AliasChoices("GROQ_MODEL", "groq_model"),
+    )
+
+    # Ollama
+    ollama_model: str = Field(
+        default="beam:cloud",
+        validation_alias=AliasChoices("OLLAMA_MODEL", "ollama_model"),
+    )
+    ollama_base_url: str = Field(
+        default="https://ollama.com",
+        validation_alias=AliasChoices("OLLAMA_BASE_URL", "ollama_base_url"),
+    )
+    ollama_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_API_KEY", "ollama_api_key"),
+    )
+
+    # Gemini / Google Generative AI
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY", "gemini_api_key"),
+    )
+    google_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY", "google_api_key"),
+    )
+    gemini_model: str = Field(
+        default="gemini-3.8-flash",
+        validation_alias=AliasChoices("GEMINI_MODEL", "gemini_model"),
+    )
+
+    # OpenRouter
+    openrouter_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OPENROUTER_API_KEY", "openrouter_api_key"),
+    )
+    openrouter_model: str = Field(
+        default="Nemotron 3 Nano Omni",
+        validation_alias=AliasChoices("OPENROUTER_MODEL", "openrouter_model"),
+    )
+
+    # Hugging Face
+    huggingface_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("HUGGINGFACE_API_KEY", "HF_TOKEN", "huggingface_api_key"),
+    )
+    huggingface_model: str = Field(
+        default="",
+        validation_alias=AliasChoices("HUGGINGFACE_MODEL", "huggingface_model"),
+    )
 
     # PayPal REST app credentials. Never commit real values.
     paypal_client_id: str = Field(default="", alias="PAYPAL_CLIENT_ID")
@@ -22,12 +110,14 @@ class Settings(BaseSettings):
     paypal_webhook_ids: str = Field(default="", alias="PAYPAL_WEBHOOK_IDS")
     paypal_business_email: str = Field(default="", alias="PAYPAL_EMAIL")
 
-    eleven_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
+    eleven_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ELEVENLABS_API_KEY", "ELEVEN_LAB_API_KEY", "eleven_api_key"),
+    )
     twilo_account_sid: str = Field(default="", alias="TWILO_ACCOUNT_SID")
     twilo_auth_token: str = ""
     resend_api_key: str = ""
     twilo_whatsapp_number: str = ""
-    model: str = ""
     max_discount: int = Field(default=30, alias="MAX_DISCOUNT_ALLOWED")
     min_discount: int = Field(default=5, alias="MIN_DISCOUNT_ALLOWED")
     redis_url: str = Field(default="", alias="REDIS_URL")
@@ -60,5 +150,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Sync loaded keys into os.environ for libraries expecting standard environment variables
 if settings.mistral_api_key and "MISTRAL_API_KEY" not in os.environ:
     os.environ["MISTRAL_API_KEY"] = settings.mistral_api_key
+if settings.gemini_api_key:
+    if "GEMINI_API_KEY" not in os.environ:
+        os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
+    if "GOOGLE_API_KEY" not in os.environ:
+        os.environ["GOOGLE_API_KEY"] = settings.gemini_api_key
+if settings.groq_api_key and "GROQ_API_KEY" not in os.environ:
+    os.environ["GROQ_API_KEY"] = settings.groq_api_key
+if settings.huggingface_api_key and "HUGGINGFACE_API_KEY" not in os.environ:
+    os.environ["HUGGINGFACE_API_KEY"] = settings.huggingface_api_key
+if settings.openrouter_api_key and "OPENROUTER_API_KEY" not in os.environ:
+    os.environ["OPENROUTER_API_KEY"] = settings.openrouter_api_key

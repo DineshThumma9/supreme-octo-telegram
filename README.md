@@ -99,7 +99,7 @@ renvue/
 │       ├── policy/                    # locked Play/Observation/Action/Outcome contracts
 │       ├── router/                    # PayPal webhooks, inbound replies, API, simulator
 │       ├── service/                   # event loop, guardrails, decisions, money
-│       └── tests/                     # six regression suites
+│       └── tests/                     # seven regression suites
 ├── frontend/                          # React operations dashboard
 ├── docker-compose.yml                 # local PostgreSQL + Redis
 ├── Dockerfile
@@ -129,6 +129,8 @@ cp backend/.env.example backend/.env
 
 Fill in `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` from the sandbox app. Keep `PAYPAL_API_BASE=https://api-m.sandbox.paypal.com` for sandbox work. Real credentials belong only in `backend/.env`, which is gitignored.
 
+`DEMO_MODE=false` (the default in `.env.example`) calls the PayPal sandbox. Set it to `true` only for an offline demo: PayPal links and outbound email/WhatsApp are mocked, and the case drawer labels the link as a mock.
+
 ### 3. Install and run
 
 ```bash
@@ -153,7 +155,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. The dashboard defaults to `http://localhost:8000/api`; if the API runs elsewhere, set `VITE_API_URL` (for example `http://localhost:8001/api`) before starting Vite.
 
 ### 5. Expose the webhook
 
@@ -199,7 +201,7 @@ The failure event was seeded by the demo simulator. The order, buyer approval, c
 
 ## Tests
 
-Six regression suites cover the lifecycle, promise-to-pay, B2B invoices, subscriptions, checkout concessions, and webhook security:
+Seven regression suites cover the lifecycle, promise-to-pay, B2B invoices, subscriptions, checkout concessions, webhook security, and the ML policy / Agent Lab API:
 
 ```bash
 cd backend

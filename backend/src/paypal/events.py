@@ -159,7 +159,8 @@ def invoice_is_overdue(resource: dict[str, Any]) -> bool:
     due = _parse_dt(term.get("due_date") or detail.get("due_date"))
     if due and due.date() < date.today():
         return True
-    return status in {"OVERDUE", "UNPAID"}
+    # UNPAID only means "not paid yet"; it is not overdue until the due date passes.
+    return status == "OVERDUE"
 
 
 def extract_ids(resource: dict[str, Any], event: str) -> dict[str, str | None]:

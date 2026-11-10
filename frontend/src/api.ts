@@ -60,3 +60,90 @@ export async function simulateAction(payload: any): Promise<any> {
 export async function clearAllCases(): Promise<void> {
   await request('/cases/clear', { method: 'DELETE' })
 }
+
+// ---------- Agent Lab: recovery policy ----------
+
+export interface PolicyScoreRequest {
+  case_id?: string
+  currency?: string
+  amount_due?: number
+  days_past_due?: number
+  failure_code?: string | null
+  failure_class?: 'soft' | 'hard' | 'transient' | 'unknown'
+  payment_method_type?: string | null
+  method_age_days?: number | null
+  attempt_count?: number
+  contact_count_7d?: number
+  last_contact_hours?: number | null
+  prior_successful_payments?: number
+  prior_failed_payments?: number
+  prior_recoveries?: number
+  tenure_days?: number
+  segment?: string
+  dispute_open?: boolean
+  opt_out?: boolean
+  hour_local?: number
+  weekday?: number
+  days_to_month_end?: number
+  payday_signal?: boolean
+  invoice_age_days?: number | null
+}
+
+export interface PolicyAlternative {
+  p_pay: number
+  amount_if_paid: number
+  expected_recovered: number
+  expected_cost: number
+  expected_net: number
+}
+
+export interface PolicyScoreResponse {
+  case_id: string
+  proposed_action: string
+  approved_action: string
+  guardrail: string
+  p_pay: number | null
+  expected_recovered: number | null
+  expected_cost: number | null
+  expected_net: number | null
+  alternatives: Record<string, PolicyAlternative>
+  explanation: string[]
+  policy_version: string
+  model_version: string
+  exploration: boolean
+  observation: Record<string, unknown>
+}
+
+export interface PolicyModelInfo {
+  loaded: boolean
+  policy_version: string
+  model_version: string
+  trained_at?: string
+  training_rows?: number
+  dataset_hash?: string
+  exploration?: number
+  metrics?: Record<string, unknown>
+  play_rates?: Record<string, unknown>
+}
+
+export interface EvaluationReport {
+  generated?: string
+  dataset_hash?: string
+  policy?: string
+  [key: string]: unknown
+}
+
+export async function scorePolicy(payload: PolicyScoreRequest): Promise<PolicyScoreResponse> {
+  return request<PolicyScoreResponse>('/policy/score', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getPolicyModel(): Promise<PolicyModelInfo> {
+  return request<PolicyModelInfo>('/policy/model')
+}
+
+export async function getPolicyEvaluation(): Promise<EvaluationReport> {
+  return request<EvaluationReport>('/policy/evaluation')
+}

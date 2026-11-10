@@ -36,23 +36,81 @@ from service.decisions import log_action, log_decision, log_outcome
 from service.money import format_money, format_state_amount
 from service.states import save_state
 
+import httpx
+from langchain_groq import ChatGroq
+from langchain_huggingface import ChatHuggingFace
+from langchain_mistralai import ChatMistralAI
+from langchain.agents import create_agent
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
+from langchain_openrouter import ChatOpenRouter
+
+
 logger = get_logger(__name__)
 
 _llm_instance = None
 _llm_with_tools = None
 
+def _ollama_headers() -> dict[str, str]:
+    if settings.ollama_api_key:
+        return {"Authorization": f"Bearer {settings.ollama_api_key}"}
+    return {}
+
+
+
+models = {
+    "groq": lambda model_name: ChatGroq(
+        model=model_name or settings.groq_model or "llama-3.3-70b-versatile",
+        groq_api_key=settings.groq_api_key,
+        timeout=settings.llm_timeout,
+        max_tokens=settings.llm_max_tokens,
+    ),
+    "ollama": lambda model_name: ChatOllama(
+        model=model_name or settings.ollama_model or "beam:cloud",
+        base_url=settings.ollama_base_url,
+        num_predict=settings.llm_max_tokens,
+        timeout=settings.llm_timeout,
+        sync_client_kwargs={
+            "headers": _ollama_headers(),
+            "transport": httpx.HTTPTransport(retries=3),
+        },
+        async_client_kwargs={
+            "headers": _ollama_headers(),
+            "transport": httpx.AsyncHTTPTransport(retries=3),
+        },
+    ),
+    "mistral": lambda model_name: ChatMistralAI(
+        model=model_name or settings.mistral_model or settings.model or "mistral-small-latest",
+        mistral_api_key=settings.mistral_api_key,
+        timeout=settings.llm_timeout,
+        max_tokens=settings.llm_max_tokens,
+    ),
+    "gemini": lambda model_name: ChatGoogleGenerativeAI(
+        model=model_name or settings.gemini_model or "gemini-1.5-flash",
+        google_api_key=settings.gemini_api_key or settings.google_api_key,
+    ),
+    "openrouter": lambda model_name: ChatOpenRouter(
+        model=model_name or settings.openrouter_model,
+        api_key=settings.openrouter_api_key,
+    ),
+    "huggingface": lambda model_name: ChatHuggingFace(
+        model_name=model_name or settings.huggingface_model,
+    ),
+}
+
 
 def get_llm(tools=None):
-    """Return the singleton tool-bound ChatMistralAI instance."""
+    """Return the singleton tool-bound Chat instance."""
     global _llm_instance, _llm_with_tools
     if _llm_with_tools is None:
         if tools is None:
             from agent.tools import tools as agent_tools
 
             tools = agent_tools
-        _llm_instance = ChatMistralAI(
-            model=settings.model, temperature=0, max_retries=2, timeout=25
-        )
+        provider = (settings.llm_provider or "mistral").lower()
+        factory = models.get(provider, models["mistral"])
+        _llm_instance = factory(settings.model)
         _llm_with_tools = _llm_instance.bind_tools(tools)
     return _llm_with_tools
 
@@ -180,6 +238,9 @@ async def ensure_payment_link(
     is_sub = bool(meta.get("update_method")) or is_subscription_case(state)
 
     if payment_link and (discount_pct <= 0.0 or meta.get("discount_pct") == discount_pct):
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata.setdefault("payment_link_is_mock", "MOCK" in payment_link)
         return payment_link, link_type, is_sub
 
     customer_name = state.customer.get("name", "Customer")
@@ -202,6 +263,7 @@ async def ensure_payment_link(
         if state.case_metadata is None:
             state.case_metadata = {}
         state.case_metadata["payment_link"] = payment_link
+        state.case_metadata["payment_link_is_mock"] = "MOCK" in payment_link
         state.case_metadata["link_type"] = link_type
         if is_sub:
             state.case_metadata["update_method"] = True
@@ -211,6 +273,11 @@ async def ensure_payment_link(
             state.case_metadata["effective_amount"] = amount
         await save_state(state, db)
     except Exception as exc:
+        if not settings.demo_mode:
+            logger.error(
+                "Could not generate PayPal link for case %s: %s", state.case_id, exc
+            )
+            raise
         ref_code = state.case_id[-4:].upper() if len(state.case_id) >= 4 else state.case_id
         logger.critical("Could not generate PayPal link, using mock fallback: %s", exc)
         payment_link = f"https://www.sandbox.paypal.com/checkoutnow?token=MOCK-{ref_code}"

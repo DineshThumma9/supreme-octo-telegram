@@ -92,6 +92,11 @@ async def create_recovery_order(
             cancel_url=f"{return_base}/api/paypal/cancel?case_id={state.case_id}" if return_base else None,
         )
     except PayPalAPIError as exc:
+        if not settings.demo_mode:
+            logger.error(
+                "[PAYPAL] Order creation failed for case %s: %s", state.case_id, exc
+            )
+            raise
         logger.error("[PAYPAL] Order creation failed for case %s: %s", state.case_id, exc)
         return _mock_order(state, amount, currency, f"API error {exc.status_code}")
 

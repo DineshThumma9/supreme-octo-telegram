@@ -8,6 +8,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.models import ActionLog, DecisionLog, OutcomeLog, RecoveryState
@@ -99,6 +100,52 @@ async def log_action(
     return action_id
 
 
+async def _resolve_linkage(
+    db: AsyncSession,
+    case_id: str,
+    decision_id: str | None,
+    action_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Attach an outcome to the executed action (and its decision) when callers omit it."""
+    if decision_id is None:
+        row = (
+            await db.execute(
+                select(ActionLog.action_id, ActionLog.decision_id)
+                .where(
+                    ActionLog.case_id == case_id,
+                    ActionLog.status == "executed",
+                    ActionLog.decision_id.is_not(None),
+                )
+                .order_by(ActionLog.executed_at.desc().nullslast())
+                .limit(1)
+            )
+        ).first()
+        if row is not None:
+            action_id = action_id or row[0]
+            decision_id = row[1]
+
+    if decision_id is None:
+        decision_id = await db.scalar(
+            select(DecisionLog.decision_id)
+            .where(DecisionLog.case_id == case_id)
+            .order_by(DecisionLog.created_at.desc())
+            .limit(1)
+        )
+
+    if action_id is None and decision_id is not None:
+        action_id = await db.scalar(
+            select(ActionLog.action_id)
+            .where(
+                ActionLog.case_id == case_id,
+                ActionLog.decision_id == decision_id,
+            )
+            .order_by(ActionLog.executed_at.desc().nullslast())
+            .limit(1)
+        )
+
+    return decision_id, action_id
+
+
 async def log_outcome(
     db: AsyncSession,
     state: RecoveryState,
@@ -110,6 +157,12 @@ async def log_outcome(
     opt_out: bool = False,
     censored: bool = False,
 ) -> str:
+    # A dispute is exogenous to our outreach; linking it to the last Play would
+    # misattribute the cause. Recovery and escalation outcomes do belong to a Play.
+    if outcome_type != "dispute":
+        decision_id, action_id = await _resolve_linkage(
+            db, state.case_id, decision_id, action_id
+        )
     outcome_id = f"out_{uuid.uuid4().hex}"
     db.add(
         OutcomeLog(

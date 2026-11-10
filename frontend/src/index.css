@@ -2,55 +2,103 @@
 @import "tailwindcss";
 
 @layer base {
-  *, *::before, *::after { box-sizing: border-box; }
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
 
   :root {
-    /* Graphite ramp — dark, slight warm-neutral tint toward a trading back-office */
-    --bg-deep:    #0e0e10;
-    --bg-page:    #131315;
-    --bg-card:    #18181b;
-    --bg-raised:  #232326;
-    --hairline:   rgba(237,237,237,0.07);
+    /* Graphite neutral ramp (pure, quiet, non-slop dark desk) */
+    --surface-deep:   #0f0f10;
+    --surface-page:   #141415;
+    --surface-card:   #19191b;
+    --surface-raised: #232325;
+    --surface-hover:  #2a2a2d;
 
+    --hairline:       rgba(237, 237, 237, 0.08);
+    --hairline-focus: rgba(237, 237, 237, 0.16);
+
+    /* Three text roles: primary, secondary, muted */
     --text-primary:   #ededed;
     --text-secondary: #a1a1a6;
-    --text-muted:     #6b6b72;
+    --text-muted:     #85858b;
 
-    /* One accent: amber — money, risk, urgency */
+    /* Single accent: amber, reserved for primary action and key figure */
     --accent:         #d97706;
-    --accent-muted:   #92400e;
-    --accent-surface: rgba(217,119,6,0.08);
+    --accent-hover:   #b45309;
+    --accent-soft:    rgba(217, 119, 6, 0.12);
 
-    /* Semantic */
-    --positive:  #4cc38a;
-    --negative:  #e5484d;
+    /* Toned semantic colors (quiet, never neon) */
+    --positive:       #4cc38a;
+    --positive-soft:  rgba(76, 195, 138, 0.12);
+    --negative:       #e5484d;
+    --negative-soft:  rgba(229, 72, 77, 0.12);
   }
 
   body {
     margin: 0;
-    background-color: var(--bg-page);
+    background-color: var(--surface-page);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-family: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.5;
   }
 
   #root {
     width: 100%;
     min-height: 100svh;
+    display: flex;
+    flex-direction: column;
   }
 
-  /* Tabular figures everywhere */
-  [class*="font-mono"], .tabular { font-family: 'Geist Mono', 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
+  /* Tabular figures for data, metrics, and timestamps */
+  .tabular {
+    font-family: 'Geist Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
 
+  /* Quiet scrollbars */
   * {
     scrollbar-width: thin;
     scrollbar-color: #2a2a2d transparent;
   }
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a2d;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #39393e;
+  }
 
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a2a2d; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3a3a3e; }
+  ::selection {
+    background: var(--text-primary);
+    color: var(--surface-page);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--text-muted);
+    outline-offset: 1px;
+  }
 }
 
+@layer utilities {
+  .bg-page { background-color: var(--surface-page); }
+  .bg-deep { background-color: var(--surface-deep); }
+  .bg-card { background-color: var(--surface-card); }
+  .bg-raised { background-color: var(--surface-raised); }
+  .bg-hover { background-color: var(--surface-hover); }
+
+  .text-primary { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted { color: var(--text-muted); }
+
+  .border-hairline { border-color: var(--hairline); }
+  .border-focus { border-color: var(--hairline-focus); }
+}
