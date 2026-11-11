@@ -70,14 +70,15 @@ def get_redis_client():
     return redis_client
 
 
-async def send_resend_email(
+async def send_resend_email_result(
     urgency: str,
     customer_name: str,
     customer_email: str,
     amount: float,
     extra_context: Optional[dict] = None,
     currency: str = "USD",
-) -> bool:
+) -> tuple[bool, str]:
+    """Return (ok, delivery_status) where status is sent | captured | failed."""
     extra = extra_context or {}
     template = email_messages.get(urgency, email_messages["gentle"])
     try:
@@ -90,17 +91,24 @@ async def send_resend_email(
     except Exception:
         html_content = template.format(name=customer_name, amount=f"{amount:,.2f}")
 
-    try:
-        if settings.demo_mode:
-            logger.info(
-                "[DEMO SANDBOX] Email to %s (%s): amount %s %.2f (credits preserved)",
-                customer_email,
-                urgency,
-                currency,
-                amount,
-            )
-            return True
+    if settings.demo_mode:
+        logger.info(
+            "[DEMO SANDBOX] Email to %s (%s): amount %s %.2f (credits preserved)",
+            customer_email,
+            urgency,
+            currency,
+            amount,
+        )
+        return True, "captured"
 
+    if not settings.resend_api_key:
+        logger.warning(
+            "[EMAIL FAILED] RESEND_API_KEY is not set; email to %s was not delivered.",
+            customer_email,
+        )
+        return False, "failed"
+
+    try:
         response = await resend.Emails.send_async(
             {
                 "from": "Acme <onboarding@resend.dev>",
@@ -110,10 +118,29 @@ async def send_resend_email(
             }
         )
         logger.info("Email sent successfully: %s", response)
-        return True
+        return True, "sent"
     except Exception as exc:
-        logger.warning("Simulated email due to missing Resend API key: %s", exc)
-        return False
+        logger.warning("[EMAIL FAILED] Resend delivery to %s failed: %s", customer_email, exc)
+        return False, "failed"
+
+
+async def send_resend_email(
+    urgency: str,
+    customer_name: str,
+    customer_email: str,
+    amount: float,
+    extra_context: Optional[dict] = None,
+    currency: str = "USD",
+) -> bool:
+    ok, _ = await send_resend_email_result(
+        urgency,
+        customer_name,
+        customer_email,
+        amount,
+        extra_context=extra_context,
+        currency=currency,
+    )
+    return ok
 
 
 async def create_paypal_payment_link(
@@ -154,6 +181,7 @@ async def send_twilio_whatsapp(
         or "555555" in contact_number
         or "9876543210" in contact_number
         or "1234567890" in contact_number
+        or re.search(r"\+1\d{3}55501\d{2}", contact_number)
         or settings.demo_mode
     ):
         logger.info(
@@ -162,6 +190,14 @@ async def send_twilio_whatsapp(
             msg[:75],
         )
         return "SMdemo" + "0" * 26
+
+    if not settings.twilo_account_sid or not settings.twilo_auth_token:
+        logger.warning(
+            "[SIMULATED] Twilio credentials missing; WhatsApp to %s was not delivered: '%s...'",
+            contact_number,
+            msg[:75],
+        )
+        return "SMsim" + "0" * 26
 
     kwargs = {
         "from_": f"whatsapp:{settings.twilo_whatsapp_number}",
@@ -181,6 +217,16 @@ async def send_twilio_whatsapp(
     except Exception as exc:
         logger.error("Twilio WhatsApp Error: %s", exc)
         return f"ERROR: {exc}"
+
+
+def twilio_delivery_status(sid: object) -> str:
+    """Map a Twilio SID/result to sent | captured | failed."""
+    text = str(sid or "")
+    if text.startswith("ERROR"):
+        return "failed"
+    if text.startswith(("SMdemo", "SMsim")):
+        return "captured"
+    return "sent"
 
 
 async def cleanup_clients():

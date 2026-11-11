@@ -61,7 +61,9 @@ class WhatsAppHSMTemplate:
     PAYMENT_REMINDER = "renvue_payment_reminder_utility"
     SUBSCRIPTION_UPDATE = "renvue_subscription_update"
     INVOICE_OVERDUE = "renvue_invoice_overdue_notice"
-    CHECKOUT_RECOVERY = "renvue_checkout_recovery_utility"
+    CHECKOUT_RECOVERY_GENTLE = "renvue_checkout_recovery_gentle"
+    CHECKOUT_RECOVERY_URGENT = "renvue_checkout_recovery_urgent"
+    CHECKOUT_RECOVERY_FINAL = "renvue_checkout_recovery_final"
 
 
 def has_active_whatsapp_session(state: RecoveryState, max_window_hours: int = 24) -> bool:
@@ -129,21 +131,31 @@ def build_whatsapp_payload(
             f"({amount_str}) is overdue. Pay securely: {fallback_link}. (Ref: #RNV-{ref_code})"
         )
     elif state.case_type == "abandoned_checkout":
-        template_name = WhatsAppHSMTemplate.CHECKOUT_RECOVERY
+        attempt = min(3, (state.attempt_count or 0) + 1)
+        template_name = (
+            WhatsAppHSMTemplate.CHECKOUT_RECOVERY_GENTLE
+            if attempt <= 1
+            else WhatsAppHSMTemplate.CHECKOUT_RECOVERY_URGENT
+            if attempt == 2
+            else WhatsAppHSMTemplate.CHECKOUT_RECOVERY_FINAL
+        )
         disc = meta.get("discount_pct") or meta.get("eligible_discount")
+        if disc is not None:
+            logger.info(
+                "[WHATSAPP COMPLIANCE] Checkout case %s carrying %.0f%% concession.",
+                state.case_id,
+                float(disc),
+            )
         eff_amt = meta.get("effective_amount")
         eff_text = (
             format_money(eff_amt, state.currency or "USD")
             if eff_amt is not None
             else amount_str
         )
-        disc_text = f" ({disc:.0f}% off, now {eff_text})" if disc else ""
-        params = [name, amount_str, fallback_link, ref_code]
-        rendered_body = (
-            f"Hi {name}, you left items in your cart ({amount_str}). "
-            f"Complete checkout with your reserved discount{disc_text}: {fallback_link}. "
-            f"(Ref: #RNV-{ref_code})"
-        )
+        params = [name, amount_str, eff_text, fallback_link, ref_code]
+        # The agent already writes attempt-specific copy (gentle / urgent / final).
+        # Keep it instead of collapsing every attempt into one fixed template body.
+        rendered_body = raw_message
     elif is_subscription_case(state):
         template_name = WhatsAppHSMTemplate.SUBSCRIPTION_UPDATE
         sub_id = state.subscription_id or state.source_id or state.case_id[-8:]

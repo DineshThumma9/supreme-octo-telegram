@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Renvue API", lifespan=lifespan)
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 cors_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",

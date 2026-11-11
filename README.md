@@ -131,6 +131,8 @@ Fill in `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` from the sandbox app. Keep
 
 `DEMO_MODE=false` (the default in `.env.example`) calls the PayPal sandbox. Set it to `true` only for an offline demo: PayPal links and outbound email/WhatsApp are mocked, and the case drawer labels the link as a mock.
 
+Outbound delivery is reported honestly per audit entry: `delivery_status` is `sent`, `captured`, or `failed`. `captured` means a sandbox/test double accepted the message because no provider credentials were configured (or `DEMO_MODE=true`); it does **not** mean the customer received it. Failed sends are recorded as `outreach_failed` and the executor falls back to the other real channel.
+
 ### 3. Install and run
 
 ```bash

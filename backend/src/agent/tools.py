@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta
 
 from config.clients import (
     generate_and_send_voice_note,
-    send_resend_email,
+    send_resend_email_result,
     send_twilio_whatsapp,
+    twilio_delivery_status,
 )
 import config.db as app_db
 from config.config import settings
@@ -71,7 +72,7 @@ async def send_email_reminder(urgency: str, config: RunnableConfig) -> str:
             "link": payment_link
         }
 
-        await send_resend_email(
+        ok, delivery_status = await send_resend_email_result(
             urgency, customer_name, customer_email, amount, extra_context=extra_ctx, currency=state.currency
         )
 
@@ -81,6 +82,22 @@ async def send_email_reminder(urgency: str, config: RunnableConfig) -> str:
         else:
             state.next_retry_at = None
             await save_state(state, db)
+
+        if not ok:
+            await _log_audit(
+                state,
+                "outreach_failed",
+                next_contact,
+                db,
+                message=(
+                    f"Email delivery failed for {customer_email} ({urgency}). "
+                    f"Next channel will be attempted."
+                ),
+                channel="email",
+                direction="system",
+                delivery_status="failed",
+            )
+            return f"Email ({urgency}) failed for {customer_email}"
 
         if "b2b" in urgency:
             email_msg = (
@@ -100,9 +117,10 @@ async def send_email_reminder(urgency: str, config: RunnableConfig) -> str:
             message=email_msg,
             channel="email",
             direction="outbound",
+            delivery_status=delivery_status,
         )
 
-    return f"Email ({urgency}) queued for {customer_email}"
+    return f"Email ({urgency}) {delivery_status} to {customer_email}"
 
 
 @tool(args_schema=DiscountOfferArgs)
@@ -304,13 +322,18 @@ async def send_whatsapp_msg(msg: str, config: RunnableConfig):
         needs_link = "{payment_link}" in msg or any(
             k in msg.lower() for k in ["link", "tap", "click", "pay", "settle", "checkout", "portal", "retry"]
         )
+        needs_checkout_discount = (
+            state.case_type == "abandoned_checkout"
+            and (state.case_metadata or {}).get("effective_amount") is None
+        )
 
-        if not payment_link and needs_link:
-            # Brief yield in case create_payment_link is running concurrently in the same tool batch
-            await asyncio.sleep(0.3)
-            reloaded = await load_state(case_id, db)
-            if reloaded:
-                state = reloaded
+        if (not payment_link and needs_link) or needs_checkout_discount:
+            if not payment_link:
+                # Brief yield in case create_payment_link is running concurrently in the same tool batch
+                await asyncio.sleep(0.3)
+                reloaded = await load_state(case_id, db)
+                if reloaded:
+                    state = reloaded
             payment_link, _, _ = await ensure_payment_link(state, db)
 
         # Hydrate message text with the payment link
@@ -334,7 +357,8 @@ async def send_whatsapp_msg(msg: str, config: RunnableConfig):
         outbound_text = whatsapp_payload["body"]
         
         sid = await send_twilio_whatsapp(contact_number, outbound_text)
-        logger.info(f"Message dispatched successfully! SID: {sid} (Compliance: {whatsapp_payload.get('meta_compliance')})")
+        delivery_status = twilio_delivery_status(sid)
+        logger.info(f"WhatsApp dispatch result SID: {sid} (Compliance: {whatsapp_payload.get('meta_compliance')})")
 
         next_contact = get_next_follow_up_time(state)
         if next_contact:
@@ -346,6 +370,19 @@ async def send_whatsapp_msg(msg: str, config: RunnableConfig):
             state.next_retry_at = None
             await save_state(state, db)
 
+        if delivery_status == "failed":
+            await _log_audit(
+                state,
+                "outreach_failed",
+                next_contact,
+                db,
+                message=f"WhatsApp delivery failed to {contact_number}: {sid}",
+                channel="whatsapp",
+                direction="system",
+                delivery_status="failed",
+            )
+            return f"WhatsApp delivery failed to {contact_number}: {sid}"
+
         await _log_audit(
             state,
             "send_whatsapp_msg",
@@ -356,9 +393,15 @@ async def send_whatsapp_msg(msg: str, config: RunnableConfig):
             direction="outbound",
             meta_compliance=whatsapp_payload.get("meta_compliance"),
             hsm_template=whatsapp_payload.get("template_name"),
+            delivery_status=delivery_status,
         )
 
-    return f"WhatsApp sent to {contact_number}. SID: {sid}"
+    sid_text = str(sid)
+    if sid_text.startswith("SMsim"):
+        return f"WhatsApp simulated to {contact_number} (Twilio not configured). SID: {sid_text}"
+    if sid_text.startswith("SMdemo"):
+        return f"WhatsApp captured in demo sandbox for {contact_number}. SID: {sid_text}"
+    return f"WhatsApp sent to {contact_number}. SID: {sid_text}"
 
 
 @tool
@@ -542,10 +585,42 @@ async def log_promise_to_pay(
 
         confirm_msg = f"Thank you! We have noted your promise to pay on {target_date.strftime('%Y-%m-%d')}. Automated reminders are paused until then."
         contact_number = state.customer.get("contact", "")
-        if contact_number:
-            await send_twilio_whatsapp(contact_number, confirm_msg)
+        delivery = "not attempted (no WhatsApp contact)"
 
-        ptp_msg = f"Promise to pay recorded for {target_date.strftime('%b %d, %Y')} ({grace_days_from_incident}/{settings.max_grace_period} cumulative grace days used). Confirmation sent to customer."
+        if contact_number:
+            sid = await send_twilio_whatsapp(contact_number, confirm_msg)
+            sid_text = str(sid)
+            delivery_status = twilio_delivery_status(sid)
+            if delivery_status == "failed":
+                delivery = "delivery failed"
+                logger.error("[PTP] Confirmation delivery failed for case %s: %s", state.case_id, sid_text)
+            elif delivery_status == "captured":
+                delivery = "captured in sandbox"
+            else:
+                delivery = "sent"
+
+            # Record the customer-facing text on the same outbound path as
+            # send_whatsapp_msg so the UI and audit trail show the reply.
+            audit_event = (
+                "send_whatsapp_msg" if delivery_status != "failed" else "outreach_failed"
+            )
+            audit_message = (
+                confirm_msg
+                if delivery_status != "failed"
+                else f"WhatsApp delivery failed to {contact_number}: {sid_text}"
+            )
+            await _log_audit(
+                state,
+                audit_event,
+                target_date,
+                db,
+                message=audit_message,
+                channel="whatsapp",
+                direction="outbound" if delivery_status != "failed" else "system",
+                delivery_status=delivery_status,
+            )
+
+        ptp_msg = f"Promise to pay recorded for {target_date.strftime('%b %d, %Y')} ({grace_days_from_incident}/{settings.max_grace_period} cumulative grace days used). Confirmation {delivery}."
         await _log_audit(
             state,
             "log_promise_to_pay",
@@ -556,7 +631,7 @@ async def log_promise_to_pay(
             direction="system",
         )
 
-    return f"Successfully logged promise to pay on {target_date.strftime('%Y-%m-%d')} ({grace_days_from_incident}/{settings.max_grace_period} grace days used). Confirmation message sent to customer."
+    return f"Successfully logged promise to pay on {target_date.strftime('%Y-%m-%d')} ({grace_days_from_incident}/{settings.max_grace_period} grace days used). Confirmation {delivery}."
 
 
 tools = [

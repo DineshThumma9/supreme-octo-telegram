@@ -15,6 +15,7 @@ export const AuditEntrySchema = z.object({
   message: z.string().nullable().optional(),
   channel: z.string().nullable().optional(),
   direction: z.string().nullable().optional(),
+  delivery_status: z.string().nullable().optional(),
   created_at: z.string().nullable().optional(),
 })
 

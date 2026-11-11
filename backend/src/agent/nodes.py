@@ -192,6 +192,31 @@ async def decide_reply(state: AgentState):
                         await mark_case_escalated(rs, reason)
                         break
                 return {"messages": [response]}
+
+            # A plain-text reply has no tool call to carry it. Wrap it in
+            # send_whatsapp_msg so the customer actually receives it and the
+            # audit log/UI records an outbound message.
+            raw_content = response.content
+            content = raw_content.strip() if isinstance(raw_content, str) else ""
+            if content:
+                return {
+                    "messages": [
+                        AIMessage(
+                            content=content,
+                            tool_calls=[{
+                                "name": "send_whatsapp_msg",
+                                "args": {"msg": content},
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "tool_call",
+                            }],
+                        )
+                    ]
+                }
+
+            logger.warning(
+                "[ROUTER] LLM returned no content and no tool calls (attempt %s/5)",
+                attempt + 1,
+            )
         except Exception as e:
             err_str = str(e).lower()
             if "429" in err_str or "rate_limited" in err_str:

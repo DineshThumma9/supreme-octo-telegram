@@ -24,64 +24,6 @@ import {
   ArrowRight,
 } from 'lucide-react'
 
-interface ChatMessage {
-  id: string
-  sender: 'user' | 'agent' | 'system'
-  text: string
-  timestamp: Date
-  isStatus?: boolean
-  channel?: 'whatsapp' | 'email' | 'system'
-}
-
-function buildChatFromAuditLog(caseData: Case): ChatMessage[] {
-  const msgs: ChatMessage[] = []
-
-  msgs.push({
-    id: `init-${caseData.case_id}`,
-    sender: 'system',
-    text: `Payment failure detected: $${(caseData.amount || 0).toLocaleString()} (${caseData.failure_reason || 'Declined'})`,
-    timestamp: caseData.first_seen_at ? new Date(caseData.first_seen_at) : new Date(),
-    isStatus: true,
-    channel: 'system',
-  })
-
-  if (caseData.audit_log && caseData.audit_log.length > 0) {
-    caseData.audit_log.forEach((log, i) => {
-      if (log.event_triggered === 'payment_failed') return
-
-      const nextStr = log.next_contact ? ` · Next: ${new Date(log.next_contact).toLocaleDateString()}` : ''
-      const text = (log.message || `Agent action: ${log.event_triggered.replace(/_/g, ' ')}`) + nextStr
-      const isCust = log.direction === 'inbound' || log.event_triggered === 'customer_reply'
-      const isSys = log.direction === 'system' || ['get_next_payday_date', 'log_promise_to_pay'].includes(log.event_triggered)
-
-      msgs.push({
-        id: `log-${caseData.case_id}-${i}-${log.event_triggered}`,
-        sender: isCust ? 'user' : isSys ? 'system' : 'agent',
-        text,
-        timestamp: log.created_at ? new Date(log.created_at) : new Date(),
-        isStatus: isSys,
-        channel: (log.channel as any) || (isSys ? 'system' : 'whatsapp'),
-      })
-    })
-  }
-
-  if (['recovered', 'closed', 'escalated'].includes(caseData.recovery_status)) {
-    const terminalMsg = caseData.recovery_status === 'escalated'
-      ? `Case escalated to human support (Attempt ${caseData.attempt_count}/3).`
-      : `Case resolved and marked as ${caseData.recovery_status.toUpperCase()}.`
-    msgs.push({
-      id: `term-${caseData.case_id}`,
-      sender: 'system',
-      text: terminalMsg,
-      timestamp: new Date(),
-      isStatus: true,
-      channel: 'system',
-    })
-  }
-
-  return msgs
-}
-
 export default function App() {
   const [drawerWidth, setDrawerWidth] = useState(600)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -167,7 +109,6 @@ export default function App() {
 
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
   const [replyText, setReplyText] = useState('')
 
   const storeCase = useCaseStore((state) => state.cases.find((c) => c.case_id === activeCaseId))
@@ -175,7 +116,6 @@ export default function App() {
   useEffect(() => {
     if (storeCase && activeCaseId) {
       setActiveCase(storeCase)
-      setChatHistory(buildChatFromAuditLog(storeCase))
       if (['recovered', 'closed', 'escalated'].includes(storeCase.recovery_status)) {
         setIsPolling(false)
       }
@@ -188,7 +128,6 @@ export default function App() {
     setIsPolling(false)
     setActiveCaseId(null)
     setActiveCase(null)
-    setChatHistory([])
     setReplyText('')
   }
 
@@ -208,15 +147,6 @@ export default function App() {
       const data = await simulateFire(payload)
       if (data.id) {
         setActiveCaseId(data.id)
-        setChatHistory([
-          {
-            id: `init-${data.id}`,
-            sender: 'system',
-            text: `Payment failure detected: $${amount.toLocaleString()} (${declineReason})`,
-            timestamp: new Date(),
-            isStatus: true,
-          },
-        ])
         setStep(2)
         setIsPolling(true)
       }
@@ -233,7 +163,6 @@ export default function App() {
       const caseData = await fetchCase(activeCaseId)
       if (!caseData) return
       setActiveCase(caseData)
-      setChatHistory(buildChatFromAuditLog(caseData))
 
       if (['recovered', 'closed', 'escalated'].includes(caseData.recovery_status)) {
         setIsPolling(false)
@@ -248,16 +177,6 @@ export default function App() {
     setIsSimulating(true)
 
     if (actionType === 'reply' && msgContent) {
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          id: `pending-${Date.now()}`,
-          sender: 'user',
-          text: msgContent,
-          timestamp: new Date(),
-          channel: 'whatsapp',
-        },
-      ])
       setReplyText('')
     }
 
@@ -307,8 +226,6 @@ export default function App() {
         return lastOutbound.message + nextStr
       }
     }
-    const agentMsgs = chatHistory.filter((m) => m.sender === 'agent')
-    if (agentMsgs.length > 0) return agentMsgs[agentMsgs.length - 1].text
     return `Hi ${name}, your payment of $${amount.toLocaleString()} didn't go through. Your order is reserved — tap the link to retry.`
   })()
 
@@ -512,7 +429,7 @@ export default function App() {
                             className="h-8 px-3 rounded border border-hairline bg-raised hover:bg-hover text-secondary hover:text-primary text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
                           >
                             <FastForward className="w-3 h-3 text-muted" />
-                            <span>Fast-forward (+3 days)</span>
+                            <span>Trigger next follow-up</span>
                           </button>
 
                           <button

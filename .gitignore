@@ -32,3 +32,5 @@ backend/.env.prod
 plan.md 
 CONTEXT.md 
 .playwright-mcp/
+
+docs/

@@ -16,14 +16,21 @@ import { Calendar } from "lucide-react"
 const EVENT_STYLES: Record<string, { title: string; class: string }> = {
   payment_failed: { title: 'Payment failed', class: 'text-negative bg-negative/10 border-negative' },
   customer_reply: { title: 'Customer reply', class: 'text-secondary bg-zinc-900 border-zinc-700' },
-  send_whatsapp_msg: { title: 'WhatsApp dispatched', class: 'text-secondary bg-zinc-900 border-zinc-700' },
-  send_email_reminder: { title: 'Email reminder sent', class: 'text-secondary bg-zinc-900 border-zinc-700' },
+  send_whatsapp_msg: { title: 'WhatsApp message', class: 'text-secondary bg-zinc-900 border-zinc-700' },
+  send_email_reminder: { title: 'Email reminder', class: 'text-secondary bg-zinc-900 border-zinc-700' },
+  outreach_failed: { title: 'Outreach failed', class: 'text-negative bg-negative/10 border-negative' },
   get_voice_call: { title: 'Voice note dispatched', class: 'text-secondary bg-zinc-900 border-zinc-700' },
   create_payment_link: { title: 'PayPal payment link created', class: 'text-amber-600 bg-amber-600/10 border-amber-600' },
   escalate_to_human: { title: 'Escalated to human', class: 'text-negative bg-negative/10 border-negative' },
   get_next_payday_date: { title: 'Payday milestone', class: 'text-secondary bg-zinc-900 border-zinc-700' },
   log_promise_to_pay: { title: 'Promise to pay recorded', class: 'text-amber-600 bg-amber-600/10 border-amber-600' },
   complete_case: { title: 'Case resolved — recovered', class: 'text-positive bg-positive/10 border-positive' },
+}
+
+const DELIVERY_BADGES: Record<string, { label: string; class: string }> = {
+  sent: { label: 'Sent', class: 'text-positive border-positive/40 bg-positive/10' },
+  captured: { label: 'Captured · sandbox', class: 'text-amber-600 border-amber-600/40 bg-amber-600/10' },
+  failed: { label: 'Failed', class: 'text-negative border-negative/40 bg-negative/10' },
 }
 
 export function AuditTimeline({
@@ -64,6 +71,17 @@ export function AuditTimeline({
             <TimelineSeparator className="bg-hairline/50" />
 
             <TimelineContent className="mt-2 space-y-2">
+              {(() => {
+                const badge = e.delivery_status ? DELIVERY_BADGES[e.delivery_status] : undefined
+                return badge ? (
+                  <span
+                    className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-medium uppercase tracking-wide ${badge.class}`}
+                  >
+                    {badge.label}
+                  </span>
+                ) : null
+              })()}
+
               {e.message && (
                 isCustomer ? (
                   <Bubble variant="inbound" className="border-hairline text-secondary">

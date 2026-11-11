@@ -14,7 +14,9 @@ from config.clients import (
     generate_and_send_voice_note,
     get_redis_client,
     send_resend_email,
+    send_resend_email_result,
     send_twilio_whatsapp,
+    twilio_delivery_status,
 )
 from config.config import settings
 from config.db import AsyncSessionLocal
@@ -174,6 +176,7 @@ async def _log_audit(
     direction: str | None = None,
     meta_compliance: str | None = None,
     hsm_template: str | None = None,
+    delivery_status: str | None = None,
 ):
     entry = AuditEntry(
         event_triggered=tool_name,
@@ -186,6 +189,7 @@ async def _log_audit(
         direction=direction,
         meta_compliance=meta_compliance,
         hsm_template=hsm_template,
+        delivery_status=delivery_status,
         created_at=datetime.now(),
     )
     state.audit_log.append(entry.model_dump(mode="json"))
@@ -237,7 +241,17 @@ async def ensure_payment_link(
     link_type = meta.get("link_type", "one_time_payment")
     is_sub = bool(meta.get("update_method")) or is_subscription_case(state)
 
-    if payment_link and (discount_pct <= 0.0 or meta.get("discount_pct") == discount_pct):
+    eligible_checkout_discount = (
+        get_bell_curve_discount(state) if state.case_type == "abandoned_checkout" else 0.0
+    )
+    existing_discount = float(meta.get("discount_pct") or 0.0)
+    needs_checkout_discount = (
+        eligible_checkout_discount > 0 and existing_discount != eligible_checkout_discount
+    )
+
+    if payment_link and not needs_checkout_discount and (
+        discount_pct <= 0.0 or existing_discount == discount_pct
+    ):
         if state.case_metadata is None:
             state.case_metadata = {}
         state.case_metadata.setdefault("payment_link_is_mock", "MOCK" in payment_link)
@@ -283,6 +297,12 @@ async def ensure_payment_link(
         payment_link = f"https://www.sandbox.paypal.com/checkoutnow?token=MOCK-{ref_code}"
         link_type = "one_time_payment"
         is_sub = False
+        if state.case_metadata is None:
+            state.case_metadata = {}
+        state.case_metadata["payment_link"] = payment_link
+        state.case_metadata["payment_link_is_mock"] = True
+        state.case_metadata["link_type"] = link_type
+        await save_state(state, db)
 
     return payment_link, link_type, is_sub
 
@@ -505,7 +525,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
             if not rs.customer.get("email"):
                 return False
             email_amount = (rs.case_metadata or {}).get("effective_amount", rs.amount)
-            ok = await send_resend_email(
+            ok, delivery_status = await send_resend_email_result(
                 email_urgency,
                 rs.customer.get("name", "Customer"),
                 rs.customer["email"],
@@ -527,15 +547,43 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     message=f"Sent {email_urgency} recovery email with PayPal link {payment_link}",
                     channel="email",
                     direction="outbound",
+                    delivery_status=delivery_status,
                 )
                 dispatched_channel = "send_email_reminder"
+            else:
+                await _log_audit(
+                    rs,
+                    "outreach_failed",
+                    None,
+                    db,
+                    message=(
+                        f"Email delivery failed for {rs.customer['email']} "
+                        f"({email_urgency}). Trying the next available channel."
+                    ),
+                    channel="email",
+                    direction="system",
+                    delivery_status="failed",
+                )
             return ok
 
         async def send_whatsapp() -> bool:
             nonlocal dispatched_channel
             if not rs.customer.get("contact"):
                 return False
-            await send_twilio_whatsapp(rs.customer["contact"], final_wa_body)
+            sid = await send_twilio_whatsapp(rs.customer["contact"], final_wa_body)
+            delivery_status = twilio_delivery_status(sid)
+            if delivery_status == "failed":
+                await _log_audit(
+                    rs,
+                    "outreach_failed",
+                    None,
+                    db,
+                    message=f"WhatsApp delivery failed to {rs.customer['contact']}: {sid}",
+                    channel="whatsapp",
+                    direction="system",
+                    delivery_status="failed",
+                )
+                return False
             await _log_audit(
                 rs,
                 "send_whatsapp_msg",
@@ -546,6 +594,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                 direction="outbound",
                 meta_compliance=whatsapp_payload.get("meta_compliance"),
                 hsm_template=whatsapp_payload.get("template_name"),
+                delivery_status=delivery_status,
             )
             dispatched_channel = "send_whatsapp_msg"
             return True
@@ -557,7 +606,8 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
             if not await send_whatsapp():
                 await send_email()
         elif approved.play == Play.PAYPAL_INVOICE_REMINDER:
-            await send_email()
+            if not await send_email():
+                await send_whatsapp()
             if rs.invoice_id:
                 try:
                     from paypal.invoicing import remind_invoice
@@ -565,21 +615,23 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     await remind_invoice(rs, rs.invoice_id)
                 except Exception as exc:
                     logger.warning("[PAYPAL] Invoice reminder failed: %s", exc)
-        elif approved.play == Play.UPDATE_METHOD_LINK:
+        elif approved.play in (Play.UPDATE_METHOD_LINK, Play.DISCOUNT_LINK):
             if not await send_email():
-                await send_whatsapp()
-            if not dispatched_channel:
-                await send_whatsapp()
-        elif approved.play == Play.DISCOUNT_LINK:
-            if not await send_email():
-                await send_whatsapp()
-            if not dispatched_channel:
                 await send_whatsapp()
         else:  # RETRY_NOW / RETRY_PAYDAY: multi-channel retry
+            attempted = set()
             if should_send_channel(rs, "whatsapp") and rs.customer.get("contact"):
+                attempted.add("whatsapp")
                 await send_whatsapp()
             if should_send_channel(rs, "email") and rs.customer.get("email"):
+                attempted.add("email")
                 await send_email()
+            if not dispatched_channel:
+                # Preferred channel unavailable or failed; try the other real channel.
+                if rs.customer.get("contact") and "whatsapp" not in attempted:
+                    await send_whatsapp()
+                elif rs.customer.get("email") and "email" not in attempted:
+                    await send_email()
             if (
                 should_send_channel(rs, "voice")
                 and rs.customer.get("contact")

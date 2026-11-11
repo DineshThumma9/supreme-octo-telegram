@@ -1,8 +1,3 @@
-
-redis-server --daemonize yes
-
-cd /app/backend/src && taskiq scheduler background.worker:scheduler &
-cd /app/backend/src && taskiq worker background.worker:broker &
-cd /app/backend/src && uvicorn main:app --host 0.0.0.0 
-
-
+#!/usr/bin/env bash
+# Delegate to tmux launcher script
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/start-tmux.sh" "$@"

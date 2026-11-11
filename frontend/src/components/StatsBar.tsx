@@ -54,7 +54,7 @@ export function StatsBar({ stats, loading = false, onReviewEscalated }: StatsBar
             {loading ? '—' : currentStats.total_cases}
           </div>
           <div className="text-xs text-muted mt-1 tabular">
-            {currentStats.still_active ?? 83} active in queue
+            {currentStats.still_active ?? 0} active in queue
           </div>
         </div>
       </div>

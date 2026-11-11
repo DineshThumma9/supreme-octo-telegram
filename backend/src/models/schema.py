@@ -15,6 +15,7 @@ class AuditEntry(BaseModel):
     direction: Optional[str] = None  # outbound | inbound | system
     meta_compliance: Optional[str] = None
     hsm_template: Optional[str] = None
+    delivery_status: Optional[str] = None  # sent | captured | failed
     created_at: Optional[datetime] = Field(default_factory=datetime.now)
     model_config = {"extra": "allow"}
 
