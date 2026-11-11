@@ -55,8 +55,14 @@ services:
         value: src
       - key: DEMO_MODE
         value: "false"
+
+      # --- Online Learning & Nightly Retrain Policy ---
+      # Online empirical Bayes updates: ON; Nightly LightGBM retraining: OFF (candidate-only)
       - key: LEARNING_ENABLED
         value: "true"
+      - key: RETRAIN_ENABLED
+        value: "false"
+
       - key: FRONTEND_URL
         value: https://renvue-web.onrender.com
       - key: BACKEND_URL
@@ -74,13 +80,43 @@ services:
       - key: PAYPAL_WEBHOOK_ID
         sync: false
 
-      # --- AI Provider (Required) ---
+      # --- Flexible Multi-Provider LLM (Use whatever is free: groq, gemini, mistral, openrouter, ollama) ---
       - key: LLM_PROVIDER
-        value: mistral
+        sync: false # e.g. groq, gemini, mistral, openrouter
+      - key: MODEL
+        sync: false # optional common model override
+
+      # Groq (Free Tier available: e.g. llama-3.3-70b-versatile)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+
+      # Google Gemini (Free Tier available: e.g. gemini-1.5-flash)
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+
+      # Mistral AI
       - key: MISTRAL_API_KEY
         sync: false
-      - key: MODEL
-        value: mistral-small-latest
+      - key: MISTRAL_MODEL
+        sync: false
+
+      # OpenRouter
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+
+      # Ollama / Cloud
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_MODEL
+        sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
 
       # --- Optional Communications Channels ---
       - key: RESEND_API_KEY
@@ -96,9 +132,8 @@ services:
 
   # ----------------------------------------------------------------------------
   # 3. Background Taskiq Worker & Scheduler
-  # Dedicated 512 MB RAM / 0.5 CPU container. Runs asynchronous recovery plays,
-  # delayed abandoned-cart timers, and nightly empirical Bayes retraining.
-  # Isolated so heavy recovery tasks never impact API responsiveness.
+  # Dedicated 512 MB RAM / 0.5 CPU container. Runs asynchronous recovery plays
+  # and delayed abandoned-cart timers in complete isolation from the API.
   # ----------------------------------------------------------------------------
   - type: worker
     name: renvue-worker
@@ -124,8 +159,13 @@ services:
         value: src
       - key: DEMO_MODE
         value: "false"
+
+      # --- Online Learning & Nightly Retrain Policy ---
+      # Online empirical Bayes updates: ON; Nightly LightGBM retraining: OFF (candidate-only)
       - key: LEARNING_ENABLED
         value: "true"
+      - key: RETRAIN_ENABLED
+        value: "false"
 
       # --- PayPal Sandbox Credentials (Required) ---
       - key: PAYPAL_CLIENT_ID
@@ -137,13 +177,43 @@ services:
       - key: PAYPAL_EMAIL
         sync: false
 
-      # --- AI Provider (Required) ---
+      # --- Flexible Multi-Provider LLM (Use whatever is free: groq, gemini, mistral, openrouter, ollama) ---
       - key: LLM_PROVIDER
-        value: mistral
-      - key: MISTRAL_API_KEY
         sync: false
       - key: MODEL
-        value: mistral-small-latest
+        sync: false
+
+      # Groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+
+      # Google Gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+
+      # Mistral AI
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MISTRAL_MODEL
+        sync: false
+
+      # OpenRouter
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+
+      # Ollama / Cloud
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_MODEL
+        sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
 
       # --- Optional Communications Channels ---
       - key: RESEND_API_KEY
@@ -164,8 +234,6 @@ services:
   - type: web
     name: renvue-web
     runtime: static
-    plan: free # $0/mo
-    region: oregon
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist

@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     policy_engine: str = Field(default="auto", alias="POLICY_ENGINE")
     policy_exploration: float = Field(default=0.0, alias="POLICY_EXPLORATION")
 
-    # Online learning (play-level empirical Bayes).
+    # Online learning (play-level empirical Bayes). Enabled by default.
     learning_enabled: bool = Field(default=True, alias="LEARNING_ENABLED")
     learning_prior_strength: float = Field(
         default=20.0, alias="LEARNING_PRIOR_STRENGTH"
