@@ -1,6 +1,6 @@
 """
 Renvue Master Demo & Feature Regression Test Runner.
-Orchestrates the 7 domain-specific test suites from `tests/`:
+Orchestrates the 8 domain-specific test suites from `tests/`:
 1. Lifecycle & Stopping Rules (tests/test_lifecycle.py)
 2. Promise-To-Pay & Grace Period Validation (tests/test_promise_to_pay.py)
 3. B2B Commercial Overdue Invoices (tests/test_b2b_invoices.py)
@@ -8,6 +8,7 @@ Orchestrates the 7 domain-specific test suites from `tests/`:
 5. Abandoned Checkout Concessions & Anti-Gaming (tests/test_checkout_concessions.py)
 6. PayPal Webhook Signature Verification & Idempotency (tests/test_webhook_security.py)
 7. ML Simulator, Policy Contracts & Agent Lab API (tests/test_ml_policy.py)
+8. Empirical Bayes Learning, Timeout Attribution & Retrain Safety Gates (tests/test_learning.py)
 
 Run directly via:
     uv run python src/tests/runner.py
@@ -39,6 +40,7 @@ from tests.test_ml_policy import (
     test_policy_score_api,
     test_simulator_is_deterministic_and_leak_free,
 )
+from tests.test_learning import test_learning_suite
 
 
 async def main():
@@ -56,9 +58,10 @@ async def main():
         test_guardrails_keep_final_authority()
         test_bundle_artifact_loads_and_serves_ml()
         await test_policy_score_api()
+        await test_learning_suite()
         elapsed = (datetime.now() - start).total_seconds()
         print(f"\n{GREEN}{BOLD}{'='*70}{RESET}")
-        print(f"{GREEN}{BOLD} ALL 7 REGRESSION SUITES PASSED CLEANLY in {elapsed:.2f}s!{RESET}")
+        print(f"{GREEN}{BOLD} ALL 8 REGRESSION SUITES PASSED CLEANLY in {elapsed:.2f}s!{RESET}")
         print(f"{GREEN}{BOLD}{'='*70}{RESET}\n")
     except AssertionError as e:
         print(f"\n{RED}{BOLD}❌ REGRESSION ASSERTION FAILED:{RESET} {e}")

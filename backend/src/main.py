@@ -20,6 +20,7 @@ from service.broadcast import start_broadcast_listener, stop_broadcast_listener,
 from agent.utils import get_llm
 from agent.graph import get_compiled_agent
 from router.apis import api_router
+from router.learning import router as learning_router
 from router.listeners import router
 from router.policy import router as policy_router
 from router.simulate import router as sim_router
@@ -88,7 +89,7 @@ if settings.frontend_url and settings.frontend_url not in cors_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*(\.vercel\.app|\.onrender\.com)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,6 +100,7 @@ app.include_router(sim_router)
 app.include_router(api_router)
 app.include_router(stream_router)
 app.include_router(policy_router)
+app.include_router(learning_router)
 
 
 if __name__ == "__main__":

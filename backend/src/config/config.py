@@ -139,6 +139,30 @@ class Settings(BaseSettings):
     policy_engine: str = Field(default="auto", alias="POLICY_ENGINE")
     policy_exploration: float = Field(default=0.0, alias="POLICY_EXPLORATION")
 
+    # Online learning (play-level empirical Bayes).
+    learning_enabled: bool = Field(default=True, alias="LEARNING_ENABLED")
+    learning_prior_strength: float = Field(
+        default=20.0, alias="LEARNING_PRIOR_STRENGTH"
+    )
+    learning_min_samples: int = Field(
+        default=5, alias="LEARNING_MIN_SAMPLES"
+    )
+
+    # Gated nightly retraining. Disabled by default.
+    retrain_enabled: bool = Field(default=False, alias="RETRAIN_ENABLED")
+    retrain_hour_utc: int = Field(default=10, alias="RETRAIN_HOUR_UTC")
+    retrain_minute: int = Field(default=0, alias="RETRAIN_MINUTE")
+    retrain_dry_run: bool = Field(default=True, alias="RETRAIN_DRY_RUN")
+    retrain_min_samples: int = Field(default=100, alias="RETRAIN_MIN_SAMPLES")
+    retrain_min_recovered: int = Field(
+        default=20, alias="RETRAIN_MIN_RECOVERED"
+    )
+    retrain_min_per_play: int = Field(
+        default=5, alias="RETRAIN_MIN_PER_PLAY"
+    )
+    retrain_min_plays: int = Field(default=3, alias="RETRAIN_MIN_PLAYS")
+    retrain_min_days: int = Field(default=7, alias="RETRAIN_MIN_DAYS")
+
     # Global outreach window, expressed in the merchant's local clock.
     contact_window_start_hour: int = Field(default=9, alias="CONTACT_WINDOW_START_HOUR")
     contact_window_end_hour: int = Field(default=21, alias="CONTACT_WINDOW_END_HOUR")

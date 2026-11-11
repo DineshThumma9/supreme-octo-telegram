@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { Sidebar, type NavView } from './components/Sidebar'
 import { Header } from './components/Header'
 import { StatsBar } from './components/StatsBar'
 import { EscalationPanel } from './components/EscalationPanel'
-import { CaseTable } from './components/CaseTable'
 import { CaseDrawer } from './components/CaseDrawer'
 import { AgentLab } from './components/AgentLab'
+
+const CaseGrid = lazy(() => import('./components/CaseGrid').then((m) => ({ default: m.CaseGrid })))
 
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { fetchCase, simulateFire, simulateAction, clearAllCases } from './api'
@@ -32,6 +33,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<NavView>(() => {
     const hash = window.location.hash.replace('#', '')
     if (hash === 'agent-lab' || hash === 'cases') return hash
+    if (hash === 'grid') return 'cases'
     return 'overview'
   })
 
@@ -40,6 +42,8 @@ export default function App() {
       const hash = window.location.hash.replace('#', '')
       if (hash === 'agent-lab' || hash === 'cases') {
         setActiveView(hash)
+      } else if (hash === 'grid') {
+        setActiveView('cases')
       } else {
         setActiveView('overview')
       }
@@ -504,12 +508,22 @@ export default function App() {
                       </button>
                     </div>
 
-                    <CaseTable
-                      cases={processingCases.slice(0, 10)}
-                      loading={loadingCases}
-                      onRowClick={openDrawer}
-                      showFilterTabs={false}
-                    />
+                    <Suspense
+                      fallback={
+                        <div className="h-48 flex items-center justify-center rounded-lg border border-hairline bg-card text-xs text-muted">
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          <span>Loading queue…</span>
+                        </div>
+                      }
+                    >
+                      <CaseGrid
+                        cases={processingCases.slice(0, 10)}
+                        loading={loadingCases}
+                        onRowClick={openDrawer}
+                        showFilterTabs={false}
+                        showControls={false}
+                      />
+                    </Suspense>
                   </div>
 
                   {/* Successfully Recovered preview */}
@@ -524,36 +538,60 @@ export default function App() {
                         </div>
                       </div>
 
-                      <CaseTable
-                        cases={recoveredCases.slice(0, 5)}
-                        loading={loadingCases}
-                        onRowClick={openDrawer}
-                        showFilterTabs={false}
-                      />
+                      <Suspense
+                        fallback={
+                          <div className="h-48 flex items-center justify-center rounded-lg border border-hairline bg-card text-xs text-muted">
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            <span>Loading resolved cases…</span>
+                          </div>
+                        }
+                      >
+                        <CaseGrid
+                          cases={recoveredCases.slice(0, 5)}
+                          loading={loadingCases}
+                          onRowClick={openDrawer}
+                          showFilterTabs={false}
+                          showControls={false}
+                        />
+                      </Suspense>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* VIEW 2: CASES */}
+              {/* VIEW 2: CASES (POWERED BY AG GRID) */}
               {activeView === 'cases' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h2 className="text-xs font-medium text-primary">All recovery cases</h2>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-xs font-medium text-primary">All recovery cases</h2>
+                        <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          AG Grid
+                        </span>
+                      </div>
                       <p className="text-xs text-muted mt-0.5">
-                        {cases.length} total operational cases recorded
+                        {cases.length} total operational cases recorded · High-performance virtualized grid
                       </p>
                     </div>
                   </div>
 
-                  <CaseTable
-                    cases={cases}
-                    loading={loadingCases}
-                    onRowClick={openDrawer}
-                    showFilterTabs={true}
-                    defaultStatusFilter={escalatedCases.length > 0 ? 'escalated' : 'all'}
-                  />
+                  <Suspense
+                    fallback={
+                      <div className="h-64 flex items-center justify-center rounded-lg border border-hairline bg-card text-xs text-muted">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        <span>Loading AG Grid…</span>
+                      </div>
+                    }
+                  >
+                    <CaseGrid
+                      cases={cases}
+                      loading={loadingCases}
+                      onRowClick={openDrawer}
+                      showFilterTabs={true}
+                      defaultStatusFilter={escalatedCases.length > 0 ? 'escalated' : 'all'}
+                    />
+                  </Suspense>
                 </div>
               )}
 

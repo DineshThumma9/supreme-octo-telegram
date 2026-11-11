@@ -330,7 +330,12 @@ async def _handle_hold(db: AsyncSession, event: dict[str, Any]) -> str:
     return f"Case {state.case_id} placed on hold."
 
 
-async def _handle_failure(db: AsyncSession, event: dict[str, Any]) -> str:
+async def _handle_failure(
+    db: AsyncSession,
+    event: dict[str, Any],
+    *,
+    simulated: bool = False,
+) -> str:
     etype = event_type(event)
     resource = event_resource(event)
     state, ids = await _find_case(db, event, active_only=False)
@@ -339,11 +344,13 @@ async def _handle_failure(db: AsyncSession, event: dict[str, Any]) -> str:
         return f"Case {state.case_id} is already recovered; failure ignored."
 
     if state is None:
-        state = await parse_paypal_event(event, db)
+        state = await parse_paypal_event(event, db, simulated=simulated)
         if state is None:
             return "Failure event ignored: unsupported case type."
         await save_state(state, db)
     else:
+        if simulated:
+            state.case_metadata = {**(state.case_metadata or {}), "simulated": True}
         amount, currency = extract_amount(resource, etype)
         if amount > 0:
             state.amount = amount
@@ -379,7 +386,12 @@ async def _enqueue_agent(case_id: str) -> None:
         asyncio.create_task(invoke_agent_task(case_id))
 
 
-async def handle_paypal_event(event: dict[str, Any], db: AsyncSession) -> dict[str, Any]:
+async def handle_paypal_event(
+    event: dict[str, Any],
+    db: AsyncSession,
+    *,
+    simulated: bool = False,
+) -> dict[str, Any]:
     """Route a verified PayPal webhook event into the recovery state machine."""
     etype = event_type(event)
     resource = event_resource(event)
@@ -435,7 +447,7 @@ async def handle_paypal_event(event: dict[str, Any], db: AsyncSession) -> dict[s
                 _audit(state, "invoice_updated", "PayPal invoice status reconciled; no recovery action required.")
                 await save_state(state, db)
             return {"status": "reconciled", "reason": "invoice not overdue"}
-        return {"status": await _handle_failure(db, event)}
+        return {"status": await _handle_failure(db, event, simulated=simulated)}
 
     # Demo-only synthetic event used by the simulator to start abandoned-checkout timers.
     if etype == "CHECKOUT.ORDER.CREATED" and resource.get("id"):

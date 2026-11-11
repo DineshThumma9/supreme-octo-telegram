@@ -9,23 +9,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency resolution
-RUN pip install --no-cache-dir uv
+# Copy uv binary directly from official Astral image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Use system python environment inside docker
-ENV UV_SYSTEM_PYTHON=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV PYTHONPATH=/app/backend/src
 
-# Copy project configuration
+# Copy project configuration for layer caching
 COPY backend/pyproject.toml backend/uv.lock* ./backend/
 
-# Install dependencies using uv directly into system python
-RUN cd backend && uv sync --no-cache
+# Install dependencies using uv into virtual environment
+RUN cd backend && uv sync --frozen --no-install-project
 
-# Copy the rest of the application
+# Copy application source code
 COPY backend ./backend
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-ENV PYTHONPATH=/app/backend/src
+# Final sync to install project package
+RUN cd backend && uv sync --frozen
 
 EXPOSE 8000
 

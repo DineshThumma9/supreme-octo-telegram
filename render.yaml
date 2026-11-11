@@ -1,0 +1,178 @@
+# ==============================================================================
+# Renvue - Render Infrastructure as Code Blueprint
+# Architecture: Option 2 (Isolated Web API + Background Worker + PostgreSQL + Valkey)
+# Total Estimated Cost: ~$21/month (~$35.70 for 51 days / Nov 11 - Jan 1)
+# ==============================================================================
+
+databases:
+  # Managed PostgreSQL for ACID recovery cases, audit trails, and LangGraph checkpointer
+  - name: renvue-db
+    databaseName: renvue
+    user: renvue
+    plan: basic-256mb # $7/mo - persistent, never sleeps, does not expire after 30 days
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Ephemeral Key-Value Store (Redis-compatible / Valkey)
+  # Used for Taskiq recovery queue scheduling and SSE broadcast pub/sub
+  # ----------------------------------------------------------------------------
+  - type: keyvalue
+    name: renvue-redis
+    plan: free # $0/mo - 25 MB RAM, up to 50 connections
+    region: oregon
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  # ----------------------------------------------------------------------------
+  # 2. Core Backend API (FastAPI)
+  # Dedicated 512 MB RAM / 0.5 CPU container. Handles webhook ingestion,
+  # manual approvals, SSE streaming, and AG Grid data queries.
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: renvue-api
+    runtime: python
+    plan: starter # $7/mo
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uv run python scripts/seed_diverse_cases.py && uv run uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: renvue-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: renvue-redis
+          property: connectionString
+      - key: PYTHONPATH
+        value: src
+      - key: DEMO_MODE
+        value: "false"
+      - key: LEARNING_ENABLED
+        value: "true"
+      - key: FRONTEND_URL
+        value: https://renvue-web.onrender.com
+      - key: BACKEND_URL
+        value: https://renvue-api.onrender.com
+
+      # --- PayPal Sandbox Credentials (Required) ---
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_API_BASE
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_EMAIL
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+
+      # --- AI Provider (Required) ---
+      - key: LLM_PROVIDER
+        value: mistral
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MODEL
+        value: mistral-small-latest
+
+      # --- Optional Communications Channels ---
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TWILO_ACCOUNT_SID
+        sync: false
+      - key: TWILO_AUTH_TOKEN
+        sync: false
+      - key: TWILO_WHATSAPP_NUMBER
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+  # ----------------------------------------------------------------------------
+  # 3. Background Taskiq Worker & Scheduler
+  # Dedicated 512 MB RAM / 0.5 CPU container. Runs asynchronous recovery plays,
+  # delayed abandoned-cart timers, and nightly empirical Bayes retraining.
+  # Isolated so heavy recovery tasks never impact API responsiveness.
+  # ----------------------------------------------------------------------------
+  - type: worker
+    name: renvue-worker
+    runtime: python
+    plan: starter # $7/mo
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: ./scripts/start-worker.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: renvue-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: renvue-redis
+          property: connectionString
+      - key: PYTHONPATH
+        value: src
+      - key: DEMO_MODE
+        value: "false"
+      - key: LEARNING_ENABLED
+        value: "true"
+
+      # --- PayPal Sandbox Credentials (Required) ---
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_API_BASE
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_EMAIL
+        sync: false
+
+      # --- AI Provider (Required) ---
+      - key: LLM_PROVIDER
+        value: mistral
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MODEL
+        value: mistral-small-latest
+
+      # --- Optional Communications Channels ---
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TWILO_ACCOUNT_SID
+        sync: false
+      - key: TWILO_AUTH_TOKEN
+        sync: false
+      - key: TWILO_WHATSAPP_NUMBER
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+
+  # ----------------------------------------------------------------------------
+  # 4. Frontend Single Page Application (Vite + React 19 + AG Grid)
+  # Global CDN Static Site hosting with zero compute cost.
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: renvue-web
+    runtime: static
+    plan: free # $0/mo
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://renvue-api.onrender.com/api

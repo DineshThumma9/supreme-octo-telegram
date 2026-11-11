@@ -34,3 +34,8 @@ CONTEXT.md
 .playwright-mcp/
 
 docs/
+
+# ML runtime & learning artifacts
+backend/src/ml/artifacts/retrain_status.json
+backend/src/ml/artifacts/retrain_status.json.tmp
+backend/src/ml/artifacts/candidates/

@@ -243,7 +243,7 @@ async def fake_event(fstate: SimulationEvent, db=Depends(get_db)):
         )
         return {"id": state.case_id, "event_type": "CHECKOUT.ORDER.CREATED", "result": "case created"}
 
-    result = await handle_paypal_event(payload, db)
+    result = await handle_paypal_event(payload, db, simulated=True)
     logger.info("[SIM] %s -> %s", fstate.event_type, result)
     return {"id": case_id, "event_type": payload["event_type"], "result": result}
 

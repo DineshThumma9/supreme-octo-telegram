@@ -50,11 +50,15 @@ def reset_cache() -> None:
     _loaded = False
 
 
-def decide(state, obs: Observation) -> PolicyDecision:
+def decide(
+    state,
+    obs: Observation,
+    learned: dict[str, dict[str, float]] | None = None,
+) -> PolicyDecision:
     policy = _load()
     if policy is not None:
         try:
-            return policy.act(obs, eligible_plays(obs))
+            return policy.act(obs, eligible_plays(obs), learned=learned)
         except Exception as exc:
             logger.warning("[POLICY] ML policy failed (%s); falling back to rules.", exc)
     action = _rules.act(obs)
@@ -80,6 +84,9 @@ def model_info() -> dict:
             "policy_version": _rules.policy_version,
             "model_version": "none",
             "exploration": 0.0,
+            "learning_enabled": settings.learning_enabled,
+            "learning_prior_strength": settings.learning_prior_strength,
+            "learning_min_samples": settings.learning_min_samples,
         }
     return {
         "loaded": True,
@@ -91,6 +98,9 @@ def model_info() -> dict:
         "exploration": float(settings.policy_exploration),
         "metrics": _bundle.metrics,
         "play_rates": _bundle.play_rates,
+        "learning_enabled": settings.learning_enabled,
+        "learning_prior_strength": settings.learning_prior_strength,
+        "learning_min_samples": settings.learning_min_samples,
     }
 
 

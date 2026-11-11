@@ -7,6 +7,7 @@ import {
   type PolicyScoreResponse,
 } from '../api'
 import { fmt } from '../utils/formatters'
+import { LearningPanel } from './LearningPanel'
 
 const PLAY_LABELS: Record<string, string> = {
   no_contact: 'No contact (control)',
@@ -64,6 +65,7 @@ export function AgentLab() {
   const [scoring, setScoring] = useState(false)
   const [scoreResult, setScoreResult] = useState<PolicyScoreResponse | null>(null)
   const [scoreError, setScoreError] = useState<string | null>(null)
+  const [useSandboxLearning, setUseSandboxLearning] = useState(false)
 
   const defaultForm: PolicyScoreRequest = {
     currency: 'USD',
@@ -153,7 +155,11 @@ export function AgentLab() {
     setScoreError(null)
     setScoreResult(null)
     try {
-      const result = await scorePolicy(form)
+      const payload: PolicyScoreRequest = {
+        ...form,
+        learning_provenance: useSandboxLearning ? 'sandbox' : 'live',
+      }
+      const result = await scorePolicy(payload)
       setScoreResult(result)
     } catch (err: any) {
       setScoreError(err?.message || 'Policy scoring failed')
@@ -164,6 +170,9 @@ export function AgentLab() {
 
   return (
     <div className="space-y-6">
+      {/* 0. Online learning loop */}
+      <LearningPanel />
+
       {/* 1. Served policy diagnostics */}
       <div className="rounded-lg border border-hairline bg-card p-4">
         <div className="flex items-center justify-between mb-3">
@@ -360,10 +369,23 @@ export function AgentLab() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <span className="text-[11px] text-muted">
-              Select play with maximum expected recovery net of channel cost.
-            </span>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-muted">
+                Select play with maximum expected recovery net of channel cost.
+              </span>
+              <label className="flex items-center gap-1.5 text-xs text-secondary cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useSandboxLearning}
+                  onChange={(e) => setUseSandboxLearning(e.target.checked)}
+                  className="rounded border-hairline bg-raised text-primary focus:ring-0"
+                />
+                <span className={useSandboxLearning ? 'text-[#f5a623] font-medium' : 'text-muted'}>
+                  Sandbox learning (simulated)
+                </span>
+              </label>
+            </div>
             <button
               type="submit"
               disabled={scoring}

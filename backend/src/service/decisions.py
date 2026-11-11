@@ -11,11 +11,32 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.models import ActionLog, DecisionLog, OutcomeLog, RecoveryState
+from config.db import AsyncSessionLocal
+from config.logger import get_logger
+from models.models import (
+    ActionLog,
+    DecisionLog,
+    LearningSample,
+    OutcomeLog,
+    RecoveryState,
+)
 from policy.baseline import RulesPolicy
 from policy.interfaces import Action, Observation, Outcome, Play
+from service.states import save_state
 
+logger = get_logger(__name__)
 _policy = RulesPolicy()
+
+_LEARNABLE_OUTCOMES = {"recovered", "unresponsive_timeout"}
+_LEARNABLE_PLAYS = {
+    "email_link",
+    "sms_link",
+    "paypal_invoice_reminder",
+    "retry_now",
+    "retry_payday",
+    "update_method_link",
+    "discount_link",
+}
 
 
 def _snapshot(obs: Observation) -> tuple[dict, str]:
@@ -182,4 +203,167 @@ async def log_outcome(
         )
     )
     await db.commit()
+
+    if outcome_type in {"recovered", "unresponsive_timeout"}:
+        try:
+            await record_learning_sample(
+                state=state,
+                outcome_id=outcome_id,
+                outcome_type=outcome_type,
+                decision_id=decision_id,
+                action_id=action_id,
+                recovered_amount=(
+                    state.recovered_amount
+                    if recovered_amount is None
+                    else recovered_amount
+                ),
+                censored=censored,
+            )
+        except Exception as exc:
+            logger.warning("[LEARNING] sample capture failed for %s: %s", outcome_id, exc)
+
+    return outcome_id
+
+
+async def record_learning_sample(
+    *,
+    state: RecoveryState,
+    outcome_id: str,
+    outcome_type: str,
+    decision_id: str | None,
+    action_id: str | None,
+    recovered_amount: float | None,
+    censored: bool,
+) -> str | None:
+    """Append one live learning label. Never raise into the caller."""
+    if outcome_type not in _LEARNABLE_OUTCOMES or not decision_id:
+        return None
+
+    sample_kind = "recovered" if outcome_type == "recovered" else "timeout"
+
+    async with AsyncSessionLocal() as db:
+        decision = await db.get(DecisionLog, decision_id)
+        if decision is None:
+            logger.warning("[LEARNING] decision %s missing; sample skipped", decision_id)
+            return None
+
+        play = decision.approved_action or decision.proposed_action
+        if not play or play not in _LEARNABLE_PLAYS:
+            return None
+
+        existing = await db.scalar(
+            select(LearningSample.sample_id).where(
+                LearningSample.decision_id == decision_id,
+                LearningSample.sample_kind == sample_kind,
+            )
+        )
+        if existing:
+            return existing
+
+        snapshot = decision.state_snapshot_json or {}
+        sample = LearningSample(
+            sample_id=f"ls_{uuid.uuid4().hex}",
+            case_id=state.case_id,
+            decision_id=decision_id,
+            action_id=action_id,
+            outcome_id=outcome_id,
+            play=play,
+            segment=str(snapshot.get("segment") or "unknown"),
+            provenance=(
+                "sandbox"
+                if (state.case_metadata or {}).get("simulated")
+                else "live"
+            ),
+            source="outcome",
+            sample_kind=sample_kind,
+            success=outcome_type == "recovered",
+            censored=censored,
+            recovered_amount=float(recovered_amount or 0.0),
+            currency=state.currency or "USD",
+            policy_version=decision.policy_version,
+            model_version=decision.model_version,
+        )
+        db.add(sample)
+        await db.commit()
+        return sample.sample_id
+
+
+async def log_unresponsive_timeout(
+    db: AsyncSession,
+    state: RecoveryState,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Log a censored no-response outcome for the previous delivered attempt."""
+    if (state.attempt_count or 0) <= 0:
+        return None
+    if state.recovery_status in {"recovered", "closed", "escalated"}:
+        return None
+    if state.dispute_id or (state.case_metadata or {}).get("opt_out"):
+        # A dispute or opt-out is not customer silence.
+        return None
+
+    meta = state.case_metadata or {}
+    touch = meta.get("last_touch") or {}
+    if touch.get("outcome_logged"):
+        return None
+    if touch.get("attempt") != state.attempt_count:
+        return None
+    if touch.get("status") not in {"sent", "captured"}:
+        # Delivery failed or was never verified. This is not customer silence.
+        return None
+    if touch.get("play") not in _LEARNABLE_PLAYS:
+        return None
+
+    decision_id, action_id = await _resolve_linkage(db, state.case_id, None, None)
+    if not decision_id:
+        return None
+
+    existing = await db.scalar(
+        select(OutcomeLog.outcome_id).where(
+            OutcomeLog.decision_id == decision_id,
+            OutcomeLog.outcome_type.in_(
+                ["recovered", "unresponsive_timeout"]
+            ),
+        )
+    )
+    if existing:
+        return None
+
+    outcome_id = await log_outcome(
+        db,
+        state,
+        "unresponsive_timeout",
+        decision_id=decision_id,
+        action_id=action_id,
+        censored=True,
+    )
+
+    touch["outcome_logged"] = True
+    touch["outcome_id"] = outcome_id
+    meta["last_touch"] = touch
+    state.case_metadata = meta
+
+    # Recommended: make the label visible in the case timeline. This is a
+    # system note, not an outreach action. It must not change last_action_taken
+    # or recovery_status.
+    if state.audit_log is None:
+        state.audit_log = []
+    state.audit_log.append(
+        {
+            "event_triggered": "unresponsive_timeout",
+            "amount": f"{float(state.amount or 0):,.2f} {state.currency or 'USD'}",
+            "recovery_status": state.recovery_status,
+            "customer": state.customer,
+            "next_contact": None,
+            "message": (
+                "No payment within the follow-up window. Recorded as a "
+                "censored non-response learning sample."
+            ),
+            "channel": "system",
+            "direction": "system",
+            "created_at": datetime.now().isoformat(),
+        }
+    )
+    await save_state(state, db)
     return outcome_id

@@ -87,10 +87,15 @@ export interface PolicyScoreRequest {
   days_to_month_end?: number
   payday_signal?: boolean
   invoice_age_days?: number | null
+  learning_provenance?: 'live' | 'sandbox' | 'off'
 }
 
 export interface PolicyAlternative {
   p_pay: number
+  p_model?: number
+  p_learned?: number | null
+  learning_n?: number
+  learning_weight?: number
   amount_if_paid: number
   expected_recovered: number
   expected_cost: number
@@ -112,6 +117,10 @@ export interface PolicyScoreResponse {
   model_version: string
   exploration: boolean
   observation: Record<string, unknown>
+  learning?: {
+    provenance: string
+    applied: boolean
+  }
 }
 
 export interface PolicyModelInfo {
@@ -146,4 +155,71 @@ export async function getPolicyModel(): Promise<PolicyModelInfo> {
 
 export async function getPolicyEvaluation(): Promise<EvaluationReport> {
   return request<EvaluationReport>('/policy/evaluation')
+}
+
+// ---------- Learning loop: empirical Bayes & retrain status ----------
+
+export interface LearningPlayStats {
+  play: string
+  n: number
+  k: number
+  timeouts: number
+  prior_p: number
+  posterior_p: number
+  weight: number
+  last_sample_at: string | null
+}
+
+export interface LearningStats {
+  provenance: string
+  source: string
+  prior_strength: number
+  min_samples: number
+  plays: LearningPlayStats[]
+  totals: { n: number; k: number; timeouts: number }
+}
+
+export interface RetrainStatus {
+  enabled: boolean
+  dry_run: boolean
+  auto_promote: boolean
+  schedule_utc: string
+  ready: boolean
+  counts: {
+    samples: number
+    recovered: number
+    timeouts: number
+    eligible_plays: number
+    days: number
+  }
+  thresholds: Record<string, number>
+  reasons: string[]
+  last_run: Record<string, unknown> | null
+}
+
+export async function getLearningStats(
+  provenance: 'live' | 'sandbox' = 'live',
+  source: 'outcome' | 'experiment' = 'outcome',
+): Promise<LearningStats> {
+  return request(`/learning/stats?provenance=${provenance}&source=${source}`)
+}
+
+export async function runSandboxExperiment(payload: {
+  experiment_id: string
+  seed?: number
+  samples_per_play?: number
+  reset?: boolean
+}): Promise<any> {
+  return request('/learning/sandbox', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function resetSandboxExperiment(): Promise<any> {
+  return request('/learning/sandbox', { method: 'DELETE' })
+}
+
+export async function getRetrainStatus(): Promise<RetrainStatus> {
+  return request('/learning/retrain-status')
 }

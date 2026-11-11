@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import JSON, DateTime
+from sqlalchemy import JSON, DateTime, Index, UniqueConstraint
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Column, Field, SQLModel
@@ -178,3 +178,53 @@ class OutcomeLog(SQLModel, table=True):
     censored: bool = False
     observation_window_end: Optional[datetime] = Field(default=None, sa_column=utc_datetime_column())
     observed_at: datetime = Field(default_factory=datetime.now, sa_column=utc_datetime_column())
+
+
+class LearningSample(SQLModel, table=True):
+    """One observed attempt-level learning label.
+
+    Live rows are created from OutcomeLog entries. Experiment rows are created
+    only by the labeled sandbox endpoint. This table is append-only; do not
+    mutate labels in place.
+    """
+
+    __tablename__ = "learning_sample"
+    __table_args__ = (
+        UniqueConstraint(
+            "decision_id",
+            "sample_kind",
+            name="uq_learning_decision_kind",
+        ),
+        UniqueConstraint("outcome_id", name="uq_learning_outcome"),
+        Index("ix_learning_provenance_source_play", "provenance", "source", "play"),
+    )
+
+    sample_id: str = Field(primary_key=True)
+    case_id: str = Field(index=True)
+    decision_id: Optional[str] = Field(default=None, index=True)
+    action_id: Optional[str] = Field(default=None, index=True)
+    outcome_id: Optional[str] = Field(default=None, index=True)
+    play: str = Field(index=True)
+    segment: str = "unknown"
+
+    # live = observed by the running deployment (including PayPal sandbox webhooks)
+    # sandbox = injected simulator case or labeled experiment
+    provenance: str = Field(default="live", index=True)
+    # outcome = came from an OutcomeLog; experiment = came from /api/learning/sandbox
+    source: str = Field(default="outcome", index=True)
+    experiment_id: Optional[str] = Field(default=None, index=True)
+
+    # recovered = paid within the observation window
+    # timeout   = a delivered touch produced no payment before the next follow-up
+    sample_kind: str = "recovered"
+    success: bool = False
+    censored: bool = False
+    recovered_amount: float = 0.0
+    currency: str = "USD"
+
+    policy_version: Optional[str] = None
+    model_version: Optional[str] = None
+    created_at: datetime = Field(
+        default_factory=datetime.now, sa_column=utc_datetime_column()
+    )
+

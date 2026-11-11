@@ -34,7 +34,12 @@ from service.compliance import (
     get_bell_curve_discount,
     is_subscription_case,
 )
-from service.decisions import log_action, log_decision, log_outcome
+from service.decisions import (
+    log_action,
+    log_decision,
+    log_outcome,
+    log_unresponsive_timeout,
+)
 from service.money import format_money, format_state_amount
 from service.states import save_state
 
@@ -409,6 +414,39 @@ async def mark_case_escalated(rs: RecoveryState, reason: str, db: AsyncSession |
         logger.warning("[HIL] Could not broadcast escalation: %s", exc)
 
 
+def _set_last_touch(
+    rs: RecoveryState,
+    play: Play,
+    attempt: int,
+    channel: str,
+    status: str,
+) -> None:
+    """Remember the last real delivery for timeout attribution."""
+    meta = rs.case_metadata or {}
+    touch = meta.get("last_touch") or {}
+
+    if touch.get("attempt") != attempt:
+        touch = {
+            "play": play.value,
+            "attempt": attempt,
+            "channels": [],
+            "status": "failed",
+            "at": datetime.now().isoformat(),
+        }
+
+    if channel and channel not in touch["channels"]:
+        touch["channels"].append(channel)
+
+    if status in {"sent", "captured"}:
+        touch["status"] = status
+        touch["delivery_status"] = status
+    elif touch.get("status") not in {"sent", "captured"}:
+        touch["status"] = status
+
+    meta["last_touch"] = touch
+    rs.case_metadata = meta
+
+
 def _play_channel(play: Play) -> str:
     return {
         Play.EMAIL_LINK: "email",
@@ -433,8 +471,23 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
         )
         return rs
 
+    try:
+        async with AsyncSessionLocal() as timeout_db:
+            await log_unresponsive_timeout(timeout_db, rs)
+    except Exception as exc:
+        logger.warning("[LEARNING] timeout capture failed: %s", exc)
+
     obs = observation_from_state(rs)
-    decision = decide_policy(rs, obs)
+
+    learned = {}
+    try:
+        from ml.learning import load_learned_rates
+
+        learned = await load_learned_rates(provenance="live", source="outcome")
+    except Exception as exc:
+        logger.warning("[LEARNING] learned rates unavailable; using model prior: %s", exc)
+
+    decision = decide_policy(rs, obs, learned=learned)
     proposed = decision.action
     guard = apply_guardrails(rs, obs, proposed)
     approved = guard.action
@@ -549,6 +602,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     direction="outbound",
                     delivery_status=delivery_status,
                 )
+                _set_last_touch(rs, approved.play, current_attempt, "email", delivery_status)
                 dispatched_channel = "send_email_reminder"
             else:
                 await _log_audit(
@@ -564,6 +618,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     direction="system",
                     delivery_status="failed",
                 )
+                _set_last_touch(rs, approved.play, current_attempt, "email", "failed")
             return ok
 
         async def send_whatsapp() -> bool:
@@ -583,6 +638,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     direction="system",
                     delivery_status="failed",
                 )
+                _set_last_touch(rs, approved.play, current_attempt, "whatsapp", "failed")
                 return False
             await _log_audit(
                 rs,
@@ -596,6 +652,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                 hsm_template=whatsapp_payload.get("template_name"),
                 delivery_status=delivery_status,
             )
+            _set_last_touch(rs, approved.play, current_attempt, "whatsapp", delivery_status)
             dispatched_channel = "send_whatsapp_msg"
             return True
 
@@ -613,6 +670,7 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     from paypal.invoicing import remind_invoice
 
                     await remind_invoice(rs, rs.invoice_id)
+                    _set_last_touch(rs, approved.play, current_attempt, "paypal", "sent")
                 except Exception as exc:
                     logger.warning("[PAYPAL] Invoice reminder failed: %s", exc)
         elif approved.play in (Play.UPDATE_METHOD_LINK, Play.DISCOUNT_LINK):
@@ -647,12 +705,14 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
                     channel="voice",
                     direction="outbound",
                 )
+                _set_last_touch(rs, approved.play, current_attempt, "voice", "sent")
                 dispatched_channel = dispatched_channel or "get_voice_call"
 
         if not dispatched_channel:
             # The link is still a real recovery action even if the customer has
             # no usable channel; keep it in metadata and record the Play.
             dispatched_channel = f"play_{approved.play.value}"
+            _set_last_touch(rs, approved.play, current_attempt, "link", "unverified")
 
         rs.attempt_count = min(3, (rs.attempt_count or 0) + 1)
         rs.last_action_taken = f"play_{approved.play.value}"

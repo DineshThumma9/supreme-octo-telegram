@@ -261,7 +261,12 @@ async def _customer_profile(
     return profile, "english", "email", customer
 
 
-async def parse_paypal_event(event: dict[str, Any], db: AsyncSession) -> RecoveryState | None:
+async def parse_paypal_event(
+    event: dict[str, Any],
+    db: AsyncSession,
+    *,
+    simulated: bool = False,
+) -> RecoveryState | None:
     """Create (or describe) a recovery case from a PayPal failure event."""
     try:
         webhook = PayPalWebhookEvent.model_validate(event)
@@ -301,6 +306,8 @@ async def parse_paypal_event(event: dict[str, Any], db: AsyncSession) -> Recover
         "invoice_number": invoice_detail.get("invoice_number"),
     }
     meta = {key: value for key, value in meta.items() if value}
+    if simulated:
+        meta["simulated"] = True
     if case_type == "overdue_invoice":
         meta.setdefault("invoice_number", ids.get("invoice_id") or f"INV-{uuid.uuid4().hex[:8].upper()}")
 

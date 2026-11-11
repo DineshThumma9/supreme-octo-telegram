@@ -1,6 +1,8 @@
 .git
 .venv
+**/.venv
 node_modules
+**/node_modules
 frontend
 backend/data
 *.sqlite
@@ -10,4 +12,5 @@ backend/data
 *.log
 .DS_Store
 __pycache__
+**/__pycache__
 *.pyc

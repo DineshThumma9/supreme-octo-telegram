@@ -42,6 +42,7 @@ class PolicyScoreRequest(BaseModel):
     payday_signal: bool = False
     invoice_age_days: int | None = None
     simulated: bool = True
+    learning_provenance: Literal["live", "sandbox", "off"] = "live"
 
 
 @router.post("/score")
@@ -53,10 +54,24 @@ async def score_case(payload: PolicyScoreRequest, db=Depends(get_db)):
             raise HTTPException(status_code=404, detail="Case not found")
         obs = observation_from_state(state)
     else:
-        values = payload.model_dump(exclude={"case_id", "simulated"})
+        values = payload.model_dump(exclude={"case_id", "simulated", "learning_provenance"})
         obs = Observation(case_id="api_score", **values)
 
-    decision = decide(state, obs)
+    learned = {}
+    if db is not None and payload.learning_provenance != "off":
+        from ml.learning import load_learned_rates
+
+        learned = await load_learned_rates(
+            db,
+            provenance=payload.learning_provenance,
+            source=(
+                "experiment"
+                if payload.learning_provenance == "sandbox"
+                else "outcome"
+            ),
+        )
+
+    decision = decide(state, obs, learned=learned)
     approved = decision.action
     guardrail = "not_evaluated"
     if state is not None:
@@ -79,6 +94,13 @@ async def score_case(payload: PolicyScoreRequest, db=Depends(get_db)):
         "model_version": decision.model_version,
         "exploration": decision.exploration,
         "observation": obs.__dict__,
+        "learning": {
+            "provenance": payload.learning_provenance,
+            "applied": any(
+                float(item.get("learning_weight", 0.0)) > 0.0
+                for item in decision.alternatives.values()
+            ),
+        },
     }
 
 

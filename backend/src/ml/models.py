@@ -256,7 +256,12 @@ class EVPolicy:
             return np.full(len(frame), float(rate.get("recovered", 0.0)))
         return np.clip(self.bundle.amount_model.predict(frame), 0.0, None)
 
-    def act(self, obs: Observation, eligible: list[Play] | None = None) -> PolicyDecision:
+    def act(
+        self,
+        obs: Observation,
+        eligible: list[Play] | None = None,
+        learned: dict[str, dict[str, float]] | None = None,
+    ) -> PolicyDecision:
         plays = list(eligible or eligible_plays(obs))
         if Play.NO_CONTACT not in plays:
             plays.append(Play.NO_CONTACT)
@@ -265,6 +270,21 @@ class EVPolicy:
         frame = self._frame(obs, plays)
         raw = self.bundle.paid_model.predict_proba(frame)[:, 1]
         p_pay = self.bundle.calibrate(raw)
+
+        p_model = p_pay.copy()
+        learning_applied = False
+        for index, play in enumerate(plays):
+            stats = (learned or {}).get(play.value)
+            if not stats:
+                continue
+            weight = float(stats.get("weight", 0.0))
+            if weight <= 0.0:
+                continue
+            p_pay[index] = (1.0 - weight) * float(p_model[index]) + weight * float(
+                stats.get("posterior_p", 0.0)
+            )
+            learning_applied = True
+        p_pay = np.clip(p_pay, 0.0, 1.0)
 
         alternatives: dict[str, dict[str, float]] = {}
         for index, play in enumerate(plays):
@@ -278,8 +298,17 @@ class EVPolicy:
                 + float(rates.get("opt_out", 0.0)) * OPT_OUT_COST
                 + float(rates.get("dispute", 0.0)) * DISPUTE_PCT * obs.amount_due
             )
+            stats = (learned or {}).get(play.value) or {}
             alternatives[play.value] = {
                 "p_pay": round(float(p_pay[index]), 6),
+                "p_model": round(float(p_model[index]), 6),
+                "p_learned": (
+                    round(float(stats["posterior_p"]), 6)
+                    if "posterior_p" in stats
+                    else None
+                ),
+                "learning_n": int(stats.get("n", 0)),
+                "learning_weight": round(float(stats.get("weight", 0.0)), 6),
                 "amount_if_paid": round(amount_if_paid, 2),
                 "expected_recovered": round(expected_recovered, 2),
                 "expected_cost": round(expected_cost, 2),
@@ -305,6 +334,10 @@ class EVPolicy:
             template_id=f"{play.value}_v1",
             rule_id=None,
         )
+        policy_version = self.policy_version
+        if learning_applied:
+            policy_version = f"{self.policy_version}+eb"
+
         return PolicyDecision(
             action=action,
             p_pay=chosen["p_pay"],
@@ -313,7 +346,7 @@ class EVPolicy:
             expected_net=chosen["expected_net"],
             alternatives=alternatives,
             explanation=self.explain(obs, play),
-            policy_version=self.policy_version,
+            policy_version=policy_version,
             model_version=self.bundle.model_version,
             exploration=exploration,
         )

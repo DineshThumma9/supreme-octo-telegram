@@ -43,7 +43,53 @@ async def init_scheduler():
             await broker.startup()
         if schedule_source._connection_pool is None:
             await schedule_source.startup()
+        await _configure_retrain_schedule()
         logger.info("[TASKIQ] Broker and schedule source initialized.")
+
+
+async def _configure_retrain_schedule() -> None:
+    schedule_id = "renvue-nightly-retrain"
+    try:
+        if not settings.retrain_enabled:
+            try:
+                await schedule_source.delete_schedule(schedule_id)
+            except Exception:
+                pass
+            logger.info("[RETRAIN] nightly schedule disabled")
+            return
+
+        existing = await schedule_source.get_schedules()
+        if any(item.schedule_id == schedule_id for item in existing):
+            logger.info("[RETRAIN] nightly schedule already registered")
+            return
+
+        from taskiq.scheduler.scheduled_task import ScheduledTask
+
+        await schedule_source.add_schedule(
+            ScheduledTask(
+                task_name="worker.nightly_retrain",
+                labels={},
+                args=[],
+                kwargs={},
+                cron=f"{settings.retrain_minute} {settings.retrain_hour_utc} * * *",
+                schedule_id=schedule_id,
+            )
+        )
+        logger.info(
+            "[RETRAIN] nightly schedule registered at %02d:%02d UTC",
+            settings.retrain_hour_utc,
+            settings.retrain_minute,
+        )
+    except Exception as exc:
+        logger.warning("[RETRAIN] schedule setup failed: %s", exc)
+
+
+@broker.task(task_name="worker.nightly_retrain")
+async def nightly_retrain():
+    _init_db()
+    from ml.retrain import run_nightly_retrain
+
+    return await run_nightly_retrain(trigger="schedule")
 
 
 async def shutdown_scheduler():
