@@ -214,7 +214,7 @@ start_services() {
     tmux select-pane -t "${SESSION_NAME}:services.0"
 
     log_success "All 4 services launched in tmux session '${SESSION_NAME}':"
-    echo -e "  ${C_CYAN}Top-Left:${C_RESET}     Backend API     (uvicorn src.main:app --reload --port 8001)"
+    echo -e "  ${C_CYAN}Top-Left:${C_RESET}     Backend API     (uvicorn src.main:app --reload --port 8000)"
     echo -e "  ${C_CYAN}Top-Right:${C_RESET}    Frontend UI     (npm run dev -> http://localhost:5173)"
     echo -e "  ${C_CYAN}Bottom-Left:${C_RESET}  Taskiq Worker   (taskiq worker -d src background.worker:broker)"
     echo -e "  ${C_CYAN}Bottom-Right:${C_RESET} Taskiq Sched    (taskiq scheduler -d src background.worker:scheduler)"

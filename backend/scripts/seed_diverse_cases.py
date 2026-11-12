@@ -1,6 +1,6 @@
 """Seed realistic diverse recovery cases into Renvue.
 
-Populates 36 diverse cases across:
+Populates 34 diverse cases across:
 - Customer personas & corporate accounts
 - Diverse amount tiers ($19.99 to $8,400.00)
 - Failure categories: failed payments, halted subscriptions, overdue invoices, abandoned carts

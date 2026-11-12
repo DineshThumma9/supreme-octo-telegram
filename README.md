@@ -87,6 +87,7 @@ Handled events include `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `P
 | Realtime | Redis pub/sub, Server-Sent Events |
 | Dashboard | React 19, Vite, Tailwind CSS v4 |
 | Data grid | AG Grid Community v36 (Quartz Graphite, virtualized, multi-sort, CSV export) |
+| Charts | AG Charts Community v14 (Tree-shaken bar, donut, multi-touch velocity & ROI analytics) |
 | Deployment | Render Blueprint (`render.yaml` isolated Web + Worker architecture) |
 | Payments | PayPal REST APIs (Orders v2, Subscriptions v1, Invoicing v2, Disputes) |
 
@@ -121,23 +122,52 @@ renvue/
 │       └── tests/                     # eight regression suites
 ├── frontend/                          # React operations dashboard
 │   ├── src/components/CaseGrid.tsx    # AG Grid Community v36 implementation
+│   ├── src/components/VizStudio.tsx   # AG Charts Community v14 analytics studio
 │   └── src/components/AgentLab.tsx    # Policy simulator & empirical Bayes panel
 └── LICENSE
 ```
 
 ## Quick start
 
+### Quick Start (Recommended: Single Docker Compose)
+
+Run the entire application (PostgreSQL, Redis, FastAPI Backend, Taskiq Worker, Taskiq Scheduler, and React Frontend) with one command:
+
+```bash
+# 1. Copy the example environment file and add your credentials
+cp .env.example .env
+
+# 2. Start all services
+docker compose up --build
+
+# 3. (Optional) Seed realistic demo recovery cases into the database
+docker compose exec backend uv run python scripts/seed_diverse_cases.py
+```
+
+- **Frontend UI**: [http://localhost:5173](http://localhost:5173)
+- **Backend API & Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+
+All service-to-service connections (Database, Redis, API URLs) are pre-configured in `docker-compose.yml`. You only need to supply your PayPal Sandbox credentials and an LLM key in `.env`.
+
+---
+
+### Alternative: Local Development Setup
+
+If you prefer running services directly on your host machine without containerizing the frontend and backend:
+
 ### Prerequisites
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- Node.js 20+ and `npm`
+- Node.js 20.19+ or 22.12+ and `npm` (required by Vite 8)
 - Docker (for local PostgreSQL and Redis)
 - A PayPal sandbox REST app from [developer.paypal.com](https://developer.paypal.com/dashboard/applications/sandbox)
+- An LLM API key (free tiers available) if you want to exercise the conversational replies
 
-### 1. Start infrastructure
+### 1. Start infrastructure (Postgres & Redis only)
 
 ```bash
-docker compose up -d
+docker compose up -d postgres redis
 ```
 
 ### 2. Configure the backend
@@ -148,6 +178,8 @@ cp backend/.env.example backend/.env
 
 Fill in `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` from the sandbox app. Keep `PAYPAL_API_BASE=https://api-m.sandbox.paypal.com` for sandbox work. Real credentials belong only in `backend/.env`, which is gitignored.
 
+The conversational AI path needs an LLM key. `.env.example` defaults to `LLM_PROVIDER=groq`, so set `GROQ_API_KEY` (a free Groq key is enough). To use another provider, set `LLM_PROVIDER` to `groq`, `gemini`, `mistral`, `openrouter`, `ollama`, or `huggingface` and fill the matching key. Without an LLM key the API still starts and the deterministic dashboard/simulator work, but inbound AI replies are disabled; the startup log prints a warning.
+
 `DEMO_MODE=false` (the default in `.env.example`) calls the PayPal sandbox. Set it to `true` only for an offline demo: PayPal links and outbound email/WhatsApp are mocked, and the case drawer labels the link as a mock.
 
 Outbound delivery is reported honestly per audit entry: `delivery_status` is `sent`, `captured`, or `failed`. `captured` means a sandbox/test double accepted the message because no provider credentials were configured (or `DEMO_MODE=true`); it does **not** mean the customer received it. Failed sends are recorded as `outreach_failed` and the executor falls back to the other real channel.
@@ -157,6 +189,10 @@ Outbound delivery is reported honestly per audit entry: `delivery_status` is `se
 ```bash
 cd backend
 uv sync
+
+# Optional: load 34 demo recovery cases so the dashboard is not empty
+# (this clears any existing cases in the configured database)
+uv run python scripts/seed_diverse_cases.py
 
 # Terminal 1 — API
 uv run uvicorn src.main:app --reload --port 8000
@@ -178,13 +214,17 @@ npm run dev
 
 Open `http://localhost:5173`. The dashboard defaults to `http://localhost:8000/api`; if the API runs elsewhere, set `VITE_API_URL` (for example `http://localhost:8001/api`) before starting Vite.
 
+If you have a local `frontend/.env.local`, it overrides that default. Make sure its `VITE_API_URL` uses the same port as the backend, or delete the file to use the default. Restart Vite after changing it.
+
 ### Alternative: One-command tmux development environment
 
-Instead of 4 separate terminals, launch the full system (FastAPI backend, Vite frontend, Taskiq worker, Taskiq scheduler) tiled in a single 2x2 tmux session:
+After steps 1–2 and the dependency installs from steps 3–4, launch the full system (FastAPI backend, Vite frontend, Taskiq worker, Taskiq scheduler) tiled in a single 2x2 tmux session:
 
 ```bash
 ./start-tmux.sh
 ```
+
+The launcher requires `tmux`, `uv`, `npm`, and (unless PostgreSQL and Redis are already running) Docker.
 
 - Mouse scrolling and clicking work across all 4 quadrants.
 - `Ctrl+b` then `d` to detach (all background services keep running).
@@ -252,6 +292,8 @@ cd backend
 PYTHONPATH=src uv run python src/tests/runner.py
 ```
 
+The suite exercises PayPal OAuth and order creation, so run it with valid sandbox credentials and `DEMO_MODE=false` (the `.env.example` default). With placeholder credentials or an offline demo configuration, the checkout-concession suite fails at the mocked PayPal link step.
+
 Run one suite directly, for example:
 
 ```bash
@@ -266,32 +308,161 @@ cd frontend
 npm run build
 ```
 
-## AG Grid unified case grid
+## AG Grid & AG Charts Unified Visualization Suite
 
-Renvue integrates **AG Grid Community v36** as its unified primary grid across the dashboard (`Overview` active processing queue, resolved history, and the full `Cases` management tab at `/#cases`):
-- **Quartz Graphite theme**: Custom-tokenized dark palette (`#19191b` background, `#141415` headers, `#ededed` text) matching Renvue's visual language with hairline borders and zero browser-native select popups.
-- **Multi-dimensional semantic filtering**:
-  - *Categorical*: Failure type (Failed payments, Halted subscriptions, Overdue invoices, Abandoned checkouts) and Outreach channel (Email link, WhatsApp, Payday retry, Method update, Invoice reminder).
-  - *Numerical*: Tiered monetary ranges (Micro `< $100`, Mid `$100 - $1,000`, High `$1,000 - $5,000`, Enterprise `> $5,000`).
-  - *Ordinal*: Touch progression (1st touch, 2nd touch, 3rd touch with visual progress pips `●○○`, `●●○`, `●●●`).
-- **Clean header sorting**: In-grid column menus suppressed (`suppressHeaderMenuButton: true`) to ensure column headers purely and cleanly sort with one click.
-- **Enterprise-grade features**: Virtualized DOM rendering, one-click CSV export (`gridApi.exportDataAsCsv()`), live search across name/email/case ID, dynamic status tabs, and side-drawer case inspection.
-- **Code-split bundle**: Dynamic import via `React.lazy` and `Suspense` keeps the core landing dashboard bundle lean (440 kB) while streaming AG Grid asynchronously.
+Renvue integrates **AG Grid Community v36** and **AG Charts Community v14** (`ag-charts-react`) to deliver an enterprise-grade analytics and queue management experience designed for high-velocity revenue recovery operations.
 
-## Deployment on Render (`render.yaml`)
+### 1. AG Charts Visualization Studio (`VizStudio.tsx`)
+The analytics view (`/#analytics`) renders real-time business telemetry powered by AG Charts:
+- **Tree-Shaken Module Architecture**: Uses `ModuleRegistry.registerModules([BarSeriesModule, DonutSeriesModule, CategoryAxisModule, NumberAxisModule])` to eliminate unused chart overhead, keeping client bundle load instantaneous.
+- **Custom Graphite Dark Theme**: Built on `ag-default-dark` with custom-tokenized palettes (`#4cc38a` emerald recovered, `#f59e0b` amber active pipeline, `#3b82f6` blue touch engagement, `#06b6d4` cyan win-rates), transparent card backgrounds, and Geist Variable typography.
+- **Four Coordinated Executive Visualizations**:
+  1. **Outreach Channel ROI (Horizontal Grouped Bar)**: Tracks recovered revenue versus active pipeline capital across outreach plays (`Email Link`, `WhatsApp`, `Fastlane Checkout`, `Payday Retry`, `Invoice Reminder`). Uses currency tick formatters and contrast grid styling.
+  2. **5-Segment Root Cause Donut**: An interactive donut chart (`innerRadiusRatio: 0.68`) with custom HTML tooltip renderers highlighting capital concentration across five primary decline categories (*Card Expired / Mandate*, *Insufficient Funds*, *Invoice Overdue*, *Checkout Abandoned*, and *Risk/Velocity Flags*).
+  3. **Touch Cadence Velocity (Vertical Grouped Bar)**: Compares cases engaged versus cases recovered across 1st, 2nd, and 3rd touches, visually diagnosing where customer response drop-off occurs.
+  4. **Amount Tier Win Rates (Horizontal Bar)**: Displays win-rate recovery percentages across transaction bands (*Micro < $100*, *Mid $100–$1k*, *High $1k–$5k*, *Enterprise > $5k*).
+- **Dynamic Real-Time Recomputation**: All charts recalculate reactively using `useMemo` hooks as recovery cases stream into the dashboard via Server-Sent Events (SSE).
 
-Renvue includes an Infrastructure-as-Code Blueprint (`render.yaml`) configuring an isolated microservice architecture:
+### 2. AG Grid Operations Console (`CaseGrid.tsx`)
+The primary case queue across the Overview and Cases (`/#cases`) views uses AG Grid Community:
+- **Quartz Graphite Theme**: Tokenized dark styling (`#19191b` card body, `#141415` headers, `#ededed` text, 14px horizontal cell padding, and subtle hairline borders) matching the Renvue visual aesthetic without browser-native popup artifacts.
+- **Multi-Dimensional Semantic Filtering**: Custom Graphite popover menus provide instant client-side filtering without page reloads:
+  - *Status Tabs*: Active, Escalated, Recovered, and Closed queues with live count badges.
+  - *Categorical*: Failure type and outreach channel.
+  - *Monetary*: Tiered balance brackets (Micro, Mid, High, Enterprise).
+  - *Ordinal*: Touch attempt progression with visual status indicators (`●○○`, `●●○`, `●●●`).
+  - *Universal Search*: Instant substring filtering across customer names, emails, and PayPal case IDs.
+- **Custom Cell Renderers**: Customer avatar cards, recovery status pills, touch attempt pips, and channel badges.
+- **High-Performance Operations**: Virtualized DOM rendering, single-click column sorting (`suppressHeaderMenuButton: true`), and instant CSV exports via `gridApi.exportDataAsCsv()`.
+- **Code-Split Streaming**: Loaded via `React.lazy` and `Suspense` so the initial application shell loads immediately (440 kB) while the data grid streams in asynchronously.
 
-| Service | Type | Plan / Tier | Purpose |
-| --- | --- | --- | --- |
-| `renvue-db` | PostgreSQL | Basic ($7/mo) | Persistent ACID database; never sleeps, does not expire after 30 days |
-| `renvue-redis` | Key-Value (Valkey) | Free ($0/mo) | In-memory Taskiq message broker and SSE live broadcast channel |
-| `renvue-api` | Web Service | Starter ($7/mo) | FastAPI backend; 512 MB isolated RAM, auto-seeds 34 diverse cases on start |
-| `renvue-worker` | Background Worker | Starter ($7/mo) | Taskiq worker & scheduler; 512 MB isolated RAM, runs scheduled recovery plays |
-| `renvue-web` | Static Site | Free ($0/mo) | Vite React SPA deployed to global CDN with automatic SPA client routing |
+---
 
-**Process isolation**:
-Running the FastAPI API and Taskiq worker in separate 512 MB containers guarantees that heavy background batch operations or retries never starve the API of CPU or memory, ensuring judges and users experience snappy 50ms dashboard interactions without HTTP 502 gateway timeouts.
+## PayPal Developer Platform Deep Integration
+
+Renvue is architected around PayPal's v1 and v2 REST developer APIs, handling the full lifecycle of payment failures, automated retries, and customer reconciliation.
+
+```
+       PayPal Sandbox Webhooks               PayPal REST APIs
+  (Events & Signature Verification)   (Orders v2, Subscriptions, Invoices)
+                │                                    ▲
+                ▼                                    │
+    ┌──────────────────────┐              ┌──────────────────────┐
+    │  Cryptographic HMAC  │              │  One-Time Recovery   │
+    │ Signature Validation │              │ Order / Capture / QR │
+    └──────────┬───────────┘              └──────────▲───────────┘
+               │                                     │
+               ▼                                     │
+    ┌──────────────────────┐              ┌──────────┴───────────┐
+    │ Deduplication Engine │              │ Taskiq Async Worker  │
+    │  (Postgres & Redis)  │ ───────────► │  & Playbook Executor │
+    └──────────────────────┘              └──────────────────────┘
+```
+
+### 1. Cryptographic Webhook Verification (`backend/src/paypal/webhooks.py`)
+- Ingests incoming PayPal webhook events with zero trust.
+- Validates PayPal certificate transmission headers (`paypal-auth-algo`, `paypal-cert-url`, `paypal-transmission-id`, `paypal-transmission-sig`, `paypal-transmission-time`) by posting the unmutated raw byte payload to `/v1/notifications/verify-webhook-signature`.
+- Deduplicates event deliveries using unique database constraints on `event.id`, preventing duplicate processing loops.
+
+### 2. Event Normalization & Ingestion (`backend/src/paypal/events.py`)
+Maps incoming PayPal webhook payloads into unified `RecoveryState` models:
+- **`PAYMENT.CAPTURE.DENIED` / `PAYMENT.CAPTURE.PENDING`**: Classifies card declines, insufficient funds, and network rejections.
+- **`BILLING.SUBSCRIPTION.PAYMENT.FAILED` / `BILLING.SUBSCRIPTION.SUSPENDED`**: Detects recurring payment lapses and suspended customer billing agreements.
+- **`INVOICING.INVOICE.UPDATED`**: Identifies B2B invoices that transitioned past their due date without payment.
+- **`CHECKOUT.ORDER.CREATED`**: Monitors order creation and initializes an asynchronous abandoned cart recovery timer.
+
+### 3. Orders v2 API & Dynamic Concessions (`backend/src/paypal/orders.py`)
+- **Instant One-Time Checkout URLs**: Invokes `POST /v2/checkout/orders` with `intent: CAPTURE`, binding the case ID to `custom_id` and `reference_id`.
+- **Dynamic AI Concessions**: When the policy or conversational agent awards a concession (e.g., a 10% retention discount), the updated discounted amount is baked directly into the PayPal purchase unit so the customer completes payment through a clean, authentic PayPal checkout experience.
+- **Idempotent Order Capture**: Captures approved payments via `POST /v2/checkout/orders/{id}/capture`, automatically marking the recovery case as `recovered` and recording recovered revenue.
+
+### 4. Invoicing v2 API (`backend/src/paypal/invoicing.py`)
+- Creates and sends draft invoices via `POST /v2/invoicing/invoices` and `POST /v2/invoicing/invoices/{id}/send`.
+- Generates embeddable PayPal QR codes for invoices via `POST /v2/invoicing/invoices/{id}/generate-qr-code`.
+- Issues automated invoice reminders using `POST /v2/invoicing/invoices/{id}/remind`.
+
+### 5. Subscriptions v1 API (`backend/src/paypal/subscriptions.py`)
+- Retrieves agreement details and failed billing cycles from `GET /v1/billing/subscriptions/{id}`.
+- Re-engages subscribers with direct update-payment-method links and reactivates stalled recurring revenue.
+
+### 6. Abandoned Cart Recovery Timer (`backend/src/background/worker.py`)
+- When a `CHECKOUT.ORDER.CREATED` event occurs, Taskiq schedules a 15-minute background evaluation timer.
+- The worker verifies the order status via `GET /v2/checkout/orders/{id}`. If the order remains uncompleted, Renvue automatically generates a Fastlane re-engagement link and contacts the buyer before drop-off is permanent.
+
+---
+
+## AI Agent & Machine Learning Architecture
+
+Renvue pairs an autonomous **LangGraph StateGraph** agent with an empirical **Machine Learning Policy Engine** to resolve cases with high win rates while strictly safeguarding merchant margins.
+
+```
+                         Incoming Event / Customer Reply
+                                        │
+                                        ▼
+                         ┌─────────────────────────────┐
+                         │ Pre-Flight Compliance Gate  │
+                         │   (TCPA 9am-9pm Window)     │
+                         └──────────────┬──────────────┘
+                                        │
+                      ┌─────────────────┴─────────────────┐
+                      │                                   │
+             [Webhook / Timer]                  [Customer Reply Inbound]
+                      ▼                                   ▼
+          ┌───────────────────────┐           ┌───────────────────────┐
+          │   Deterministic ML    │           │ Conversational Agent  │
+          │     Play Selector     │           │  (LLM + Tool Calling) │
+          └───────────┬───────────┘           └───────────┬───────────┘
+                      │                                   │
+                      │                        [Concession > 30%?]
+                      │                       ┌───────────┴───────────┐
+                      │                       │                       │
+                      │                     (Yes)                    (No)
+                      │                       ▼                       │
+                      │           ┌───────────────────────┐           │
+                      │           │ Human-in-the-Loop Gate│           │
+                      │           │ (LangGraph Interrupt) │           │
+                      │           └───────────┬───────────┘           │
+                      │                       │ (Merchant Approved)   │
+                      ▼                       ▼                       ▼
+          ┌───────────────────────────────────────────────────────────┐
+          │                    Execution & Audit                      │
+          │         (PayPal API Calls + Redis Broadcast SSE)          │
+          └───────────────────────────────────────────────────────────┘
+```
+
+### 1. StateGraph Orchestration (`backend/src/agent/graph.py`)
+- **Stateful Persistence**: Compiled with LangGraph's PostgreSQL checkpointer (`AsyncPostgresSaver`) to preserve conversation thread memory across days of customer dialogue.
+- **Pre-Flight Compliance Guardrail (`compliance_guardrail`)**: Enforces TCPA and CAN-SPAM regulations before any outreach is initiated. Validates the customer's local contact window (9:00 AM – 9:00 PM), checks cooling-off periods, and suppresses abusive contacts.
+- **Dual-Path Architecture**:
+  - **Fast-Path Engine (`decide_event`)**: Sub-10ms deterministic routing for inbound webhooks and scheduled retries, selecting the optimal recovery play instantly.
+  - **Conversational Engine (`decide_reply`)**: Routes customer responses (email, WhatsApp, SMS) to an LLM reasoning node equipped with structured tool-calling.
+
+### 2. Multi-Model LLM Support (`backend/src/agent/utils.py`)
+Supports hot-swapping between frontier and open-weight models via environment configuration:
+- **Groq** (`llama-3.3-70b-versatile`): Ultra-low latency conversational responses (< 400ms).
+- **Google Gemini** (`gemini-1.5-flash` / `gemini-3.8-flash`): High context awareness for complex dispute resolution.
+- **Mistral AI** (`mistral-small-latest`): Robust multilingual customer support.
+- **OpenRouter** / **Ollama**: Self-hosted local inference without cloud vendor lock-in.
+
+### 3. Agent Tool Calling Suite (`backend/src/agent/tools.py`)
+The LLM selects and executes tools based on customer intent:
+- `send_email_reminder`: Dispatches dynamic, tone-adaptive email copy with embedded PayPal approval links.
+- `offer_discount_concession`: Calculates and offers dynamic retention discounts bounded by merchant policy.
+- `schedule_salary_date_retry`: Uses date-parsing NLP to extract promised paydays from customer replies (e.g., *"I get paid next Friday"*) and schedules a precision Taskiq retry.
+- `escalate_case`: Routes high-friction accounts or explicit requests for human assistance to staff.
+- `complete_case`: Closes cases upon payment verification.
+
+### 4. Human-in-the-Loop Breakpoints (`escalate_gate`)
+- Graph compiled with `interrupt_before=["escalate_gate"]`.
+- If an agent proposes a concession exceeding the configured maximum (`MAX_DISCOUNT_ALLOWED`, default 30%) or detects high fraud risk, execution pauses and checkpoints to PostgreSQL.
+- The merchant receives an alert in the dashboard with an **Approve / Reject** button. Upon approval, the agent resumes execution from the exact checkpoint and issues the PayPal recovery link.
+
+### 5. Online Bayesian Learning & Offline LightGBM Policy (`backend/src/ml/`)
+- **Online Empirical Bayes (Thompson Sampling)**: Tracks observed recovery rates for each play across customer segments. Updates Beta distribution priors in real-time (`learning.py`), dynamically shifting traffic toward the highest-yield playbooks without manual tuning.
+- **Offline LightGBM Policy Engine**: Analyzes 14 engineered transaction and behavioral features (balance size, past payment count, decline code category, customer tenure) to predict the probability of recovery net of concession cost.
+- **Automated Retraining Loop**: Scheduled nightly Taskiq job that retrains the policy model on accumulated outcomes with automated candidate gating (requires sample threshold validation before promotion).
+
+---
 
 ## Demo simulator
 

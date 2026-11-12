@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: renvue-postgres
     environment:
       POSTGRES_USER: renvue
       POSTGRES_PASSWORD: renvue
@@ -14,9 +15,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    container_name: renvue-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
@@ -27,6 +30,103 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: renvue-backend
+    command: ["uv", "run", "--no-sync", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - path: .env
+        required: false
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://renvue:renvue@postgres:5432/renvue
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:5173
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  taskiq-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: renvue-worker
+    command: ["uv", "run", "--no-sync", "taskiq", "worker", "-d", "src", "background.worker:broker"]
+    env_file:
+      - path: .env
+        required: false
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://renvue:renvue@postgres:5432/renvue
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:5173
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  taskiq-scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: renvue-scheduler
+    command: ["uv", "run", "--no-sync", "taskiq", "scheduler", "-d", "src", "background.worker:scheduler"]
+    env_file:
+      - path: .env
+        required: false
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://renvue:renvue@postgres:5432/renvue
+      REDIS_URL: redis://redis:6379/0
+      BACKEND_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:5173
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: renvue-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   renvue_postgres:

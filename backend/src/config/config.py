@@ -5,12 +5,17 @@ from typing import Optional
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+_BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
+_ROOT_ENV = (
+    Path(__file__).resolve().parents[3] / ".env"
+    if len(Path(__file__).resolve().parents) > 3
+    else _BACKEND_ENV
+)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(_ENV_FILE, ".env"),
+        env_file=(_ROOT_ENV, _BACKEND_ENV, ".env"),
         extra="ignore",
     )
 

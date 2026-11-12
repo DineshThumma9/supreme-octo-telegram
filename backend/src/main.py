@@ -47,7 +47,14 @@ async def lifespan(app: FastAPI):
 
     # 5. Agent Singletons Warmup (Compiled StateGraph & Tool-bound LLM)
     get_compiled_agent()
-    get_llm()
+    try:
+        get_llm()
+    except Exception as exc:
+        logger.warning(
+            "[Lifespan] LLM unavailable (%s). Starting without conversational AI; "
+            "set LLM_PROVIDER and the matching API key to enable inbound replies.",
+            exc,
+        )
 
     logger.info("[Lifespan] All services, connection pools, and client singletons ready.")
 
@@ -71,6 +78,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Renvue API", lifespan=lifespan)
+
+
+@app.get("/")
+async def root() -> dict[str, str]:
+    return {
+        "service": "Renvue Recovery API",
+        "status": "online",
+        "docs": "/docs",
+        "health": "/health",
+        "dashboard": settings.frontend_url or "http://localhost:5173",
+    }
 
 
 @app.get("/health")

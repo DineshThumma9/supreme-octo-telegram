@@ -5,6 +5,10 @@ node_modules
 **/node_modules
 frontend
 backend/data
+backend/logs
+**/.env
+**/.env.*
+!**/.env.example
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
