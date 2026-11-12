@@ -516,9 +516,11 @@ export default function App() {
 
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
                         <div className="flex items-center gap-2">
-                          <span>Next retry:</span>
+                          <span>{activeCase?.case_metadata?.ptp_date ? 'Promise to pay:' : 'Next retry:'}</span>
                           <span className="text-secondary tabular">
-                            {activeCase?.next_retry_at
+                            {activeCase?.case_metadata?.ptp_date
+                              ? `${new Date(activeCase.case_metadata.ptp_date).toLocaleDateString()} (Reminders paused)`
+                              : activeCase?.next_retry_at
                               ? new Date(activeCase.next_retry_at).toLocaleDateString()
                               : latestNextContact
                               ? new Date(latestNextContact).toLocaleDateString()

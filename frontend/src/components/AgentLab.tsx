@@ -157,6 +157,10 @@ export function AgentLab() {
     try {
       const payload: PolicyScoreRequest = {
         ...form,
+        amount_due: Number(form.amount_due) || 480,
+        days_past_due: Number(form.days_past_due) || 0,
+        attempt_count: Number(form.attempt_count) || 0,
+        method_age_days: Number(form.method_age_days) || 0,
         learning_provenance: useSandboxLearning ? 'sandbox' : 'live',
       }
       const result = await scorePolicy(payload)
@@ -272,8 +276,8 @@ export function AgentLab() {
               <label className="block text-muted text-[11px] mb-1">Amount due (USD)</label>
               <input
                 type="number"
-                value={form.amount_due ?? ''}
-                onChange={(e) => setForm({ ...form, amount_due: Number(e.target.value) })}
+                value={form.amount_due === 0 ? '' : (form.amount_due ?? '')}
+                onChange={(e) => setForm({ ...form, amount_due: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
                 className="w-full h-8 px-2.5 rounded bg-raised border border-hairline text-xs text-primary tabular focus:border-focus focus:outline-none"
               />
             </div>
