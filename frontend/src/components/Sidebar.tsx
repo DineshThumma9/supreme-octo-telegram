@@ -4,10 +4,11 @@ import {
   FlaskConical,
   Layers,
   LayoutDashboard,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react'
 
-export type NavView = 'overview' | 'cases' | 'agent-lab'
+export type NavView = 'overview' | 'cases' | 'agent-lab' | 'analytics'
 
 interface NavItem {
   id: NavView
@@ -51,6 +52,12 @@ export function Sidebar({
       label: 'Agent lab',
       icon: FlaskConical,
       tag: 'ML',
+    },
+    {
+      id: 'analytics',
+      label: 'Analytics',
+      icon: BarChart3,
+      tag: 'Charts',
     },
   ]
 

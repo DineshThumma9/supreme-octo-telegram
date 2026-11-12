@@ -167,6 +167,14 @@ def build_whatsapp_payload(
     else:
         template_name = WhatsAppHSMTemplate.PAYMENT_REMINDER
         params = [name, amount_str, fallback_link, ref_code]
+        if "{payment_link}" in raw_message and fallback_link:
+            raw_message = raw_message.replace("{payment_link}", fallback_link)
+        elif fallback_link and fallback_link not in raw_message and "http" not in raw_message:
+            if "(Ref:" in raw_message:
+                prefix, ref_part = raw_message.rsplit("(Ref:", 1)
+                raw_message = f"{prefix.strip()} {fallback_link} (Ref:{ref_part}"
+            else:
+                raw_message = f"{raw_message.strip()} {fallback_link}"
         rendered_body = raw_message
 
     return {

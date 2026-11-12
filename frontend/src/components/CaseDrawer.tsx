@@ -110,7 +110,7 @@ export function CaseDrawer({
   }
 
   return (
-    <div className="h-full min-h-0 bg-card text-primary flex flex-col relative w-full overflow-hidden select-none">
+    <div className="h-full min-h-0 bg-card text-primary flex flex-col relative w-full overflow-hidden">
       {/* Draggable Resize Handle on Left Edge */}
       <div
         onMouseDown={handleMouseDown}

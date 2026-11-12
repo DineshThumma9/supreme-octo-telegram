@@ -9,6 +9,7 @@ import { CaseDrawer } from './components/CaseDrawer'
 import { AgentLab } from './components/AgentLab'
 
 const CaseGrid = lazy(() => import('./components/CaseGrid').then((m) => ({ default: m.CaseGrid })))
+const VizStudio = lazy(() => import('./components/VizStudio').then((m) => ({ default: m.VizStudio })))
 
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { fetchCase, simulateFire, simulateAction, clearAllCases } from './api'
@@ -23,7 +24,75 @@ import {
   X,
   MessageSquare,
   ArrowRight,
+  ExternalLink,
+  Copy,
+  Check,
 } from 'lucide-react'
+
+function renderMessageWithLinks(text: string, fallbackUrl?: string | null) {
+  const urlMatch = text.match(/https?:\/\/[^\s]+/)
+  const targetUrl = urlMatch ? urlMatch[0] : fallbackUrl
+
+  if (!targetUrl) {
+    const urlRegex = /(https?:\/\/[^\s]+)/g
+    const parts = text.split(urlRegex)
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-emerald-400 hover:text-emerald-300 underline font-mono break-all inline-flex items-center gap-0.5 select-text font-medium cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span>{part}</span>
+            <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+          </a>
+        )
+      }
+      return <span key={i} className="select-text">{part}</span>
+    })
+  }
+
+  const pattern = /(https?:\/\/[^\s]+|\b(?:this\s+link|the\s+link|payment\s+link|invoice\s+link|checkout\s+link|link)\b)/gi
+  const parts = text.split(pattern)
+  return parts.map((part, i) => {
+    if (!part) return null
+    if (part.match(/https?:\/\/[^\s]+/i)) {
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-mono text-[11px] break-all inline-flex items-center gap-0.5 select-text font-medium cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span>{part}</span>
+          <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+        </a>
+      )
+    }
+    if (part.match(/^(?:this\s+link|the\s+link|payment\s+link|invoice\s+link|checkout\s+link|link)$/i)) {
+      return (
+        <a
+          key={i}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-medium inline-flex items-center gap-0.5 select-text cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span>{part}</span>
+          <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+        </a>
+      )
+    }
+    return <span key={i} className="select-text">{part}</span>
+  })
+}
 
 export default function App() {
   const [drawerWidth, setDrawerWidth] = useState(600)
@@ -32,7 +101,9 @@ export default function App() {
   // URL hash sync for proper view navigation (no more redundant anchor scrolling!)
   const [activeView, setActiveView] = useState<NavView>(() => {
     const hash = window.location.hash.replace('#', '')
-    if (hash === 'agent-lab' || hash === 'cases') return hash
+    if (hash === 'agent-lab' || hash === 'cases' || hash === 'analytics' || hash === 'charts') {
+      return (hash === 'charts' ? 'analytics' : hash) as NavView
+    }
     if (hash === 'grid') return 'cases'
     return 'overview'
   })
@@ -40,8 +111,8 @@ export default function App() {
   useEffect(() => {
     const handleHash = () => {
       const hash = window.location.hash.replace('#', '')
-      if (hash === 'agent-lab' || hash === 'cases') {
-        setActiveView(hash)
+      if (hash === 'agent-lab' || hash === 'cases' || hash === 'analytics' || hash === 'charts') {
+        setActiveView((hash === 'charts' ? 'analytics' : hash) as NavView)
       } else if (hash === 'grid') {
         setActiveView('cases')
       } else {
@@ -107,7 +178,7 @@ export default function App() {
     else if (val === 'abandoned_checkout') setDeclineReason('Checkout abandoned')
   }
 
-  const [amount, setAmount] = useState(480)
+  const [amount, setAmount] = useState('480')
   const [name, setName] = useState('Alex Morgan')
   const [email, setEmail] = useState('alex.morgan@example.com')
 
@@ -142,7 +213,7 @@ export default function App() {
     const payload = {
       event_type: eventType,
       decline_reason: declineReason,
-      amount: Number(amount),
+      amount: Number(amount) || 480,
       name: name || 'Alex Morgan',
       email: email || 'alex.morgan@example.com',
     }
@@ -230,10 +301,32 @@ export default function App() {
         return lastOutbound.message + nextStr
       }
     }
-    return `Hi ${name}, your payment of $${amount.toLocaleString()} didn't go through. Your order is reserved — tap the link to retry.`
+    const payLink = activeCase?.case_metadata?.payment_link
+    const linkStr = payLink ? ` Tap link to retry: ${payLink}` : ''
+    return `Hi ${name}, your payment of $${Number(amount || 0).toLocaleString()} didn't go through. Your order is reserved.${linkStr}`
   })()
 
-  const headerTitle = activeView === 'overview' ? 'Overview' : activeView === 'cases' ? 'Cases' : 'Agent lab'
+  const [copiedLink, setCopiedLink] = useState(false)
+  const handleCopyLink = (url: string) => {
+    navigator.clipboard.writeText(url)
+    setCopiedLink(true)
+    setTimeout(() => setCopiedLink(false), 2000)
+  }
+
+  const extractedUrl = (() => {
+    const match = latestAgentMessage.match(/https?:\/\/[^\s]+/)
+    if (match) return match[0]
+    return activeCase?.case_metadata?.payment_link || null
+  })()
+
+  const headerTitle =
+    activeView === 'overview'
+      ? 'Overview'
+      : activeView === 'cases'
+      ? 'Cases'
+      : activeView === 'agent-lab'
+      ? 'Agent lab'
+      : 'Analytics'
 
   return (
     <TooltipProvider delay={0}>
@@ -273,8 +366,8 @@ export default function App() {
           <main className="flex-1 overflow-y-auto px-6 py-6">
             <div className="max-w-6xl mx-auto space-y-6">
               {/* Simulation Testbench */}
-              {simulate && (
-                <div className="rounded-lg border border-hairline bg-card p-4">
+                {simulate && (
+                  <div className="rounded-lg border border-hairline bg-card p-4">
                   {step === 1 ? (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
@@ -330,8 +423,10 @@ export default function App() {
                           <input
                             type="number"
                             value={amount}
-                            onChange={(e) => setAmount(Number(e.target.value))}
+                            onChange={(e) => setAmount(e.target.value)}
                             placeholder="480"
+                            min="1"
+                            step="any"
                             className="w-full h-8 px-2.5 rounded bg-raised border border-hairline text-xs text-primary tabular focus:border-focus focus:outline-none"
                           />
                         </div>
@@ -367,12 +462,39 @@ export default function App() {
                   ) : (
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 p-3 rounded bg-raised border border-hairline text-xs">
-                          <div className="text-[11px] text-muted mb-1.5 flex items-center gap-1.5">
-                            <MessageSquare className="w-3.5 h-3.5 text-muted" />
-                            <span>WhatsApp to {name} · <strong className="tabular font-medium text-secondary">${amount}</strong></span>
+                        <div className="flex-1 p-3 rounded bg-raised border border-hairline text-xs select-text">
+                          <div className="text-[11px] text-muted mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <MessageSquare className="w-3.5 h-3.5 text-muted" />
+                              <span>WhatsApp to {name} · <strong className="tabular font-medium text-secondary">${amount || '0'}</strong></span>
+                            </div>
+
+                            {extractedUrl && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyLink(extractedUrl)}
+                                  className="px-2 py-0.5 rounded bg-card hover:bg-hover border border-hairline text-[10px] text-secondary hover:text-primary transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Copy payment link"
+                                >
+                                  {copiedLink ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                                  <span>{copiedLink ? 'Copied' : 'Copy link'}</span>
+                                </button>
+                                <a
+                                  href={extractedUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>Open link</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              </div>
+                            )}
                           </div>
-                          <p className="text-secondary leading-relaxed whitespace-pre-wrap">{latestAgentMessage}</p>
+                          <p className="text-secondary leading-relaxed whitespace-pre-wrap select-text selection:bg-emerald-500/20">
+                            {renderMessageWithLinks(latestAgentMessage, extractedUrl)}
+                          </p>
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
@@ -599,6 +721,22 @@ export default function App() {
               {activeView === 'agent-lab' && (
                 <div>
                   <AgentLab />
+                </div>
+              )}
+
+              {/* VIEW 4: ANALYTICS (POWERED BY AG CHARTS) */}
+              {activeView === 'analytics' && (
+                <div>
+                  <Suspense
+                    fallback={
+                      <div className="h-64 flex items-center justify-center rounded-lg border border-hairline bg-card text-xs text-muted">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        <span>Loading AG Charts…</span>
+                      </div>
+                    }
+                  >
+                    <VizStudio cases={cases} />
+                  </Suspense>
                 </div>
               )}
             </div>

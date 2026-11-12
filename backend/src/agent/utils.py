@@ -566,7 +566,14 @@ async def execute_deterministic_recovery(rs: RecoveryState, event_source: str) -
         current_attempt = min(3, (rs.attempt_count or 0) + 1)
         wa_text, email_urgency, voice_text = get_escalation_tone(rs, attempt=current_attempt)
         if payment_link:
-            wa_text = wa_text.replace("{payment_link}", payment_link)
+            if "{payment_link}" in wa_text:
+                wa_text = wa_text.replace("{payment_link}", payment_link)
+            elif payment_link not in wa_text:
+                if "(Ref:" in wa_text:
+                    prefix, ref_part = wa_text.rsplit("(Ref:", 1)
+                    wa_text = f"{prefix.strip()} {payment_link} (Ref:{ref_part}"
+                else:
+                    wa_text = f"{wa_text.strip()} {payment_link}"
             voice_text = voice_text.replace("{payment_link}", payment_link)
 
         whatsapp_payload = build_whatsapp_payload(rs, wa_text, payment_link=payment_link)

@@ -83,8 +83,8 @@ async def create_recovery_invoice(
     meta = state.case_metadata or {}
     email = (state.customer or {}).get("email", "")
 
-    if settings.demo_mode or not email or "@example.com" in email or email.startswith("test"):
-        return _mock_invoice(state, amount, currency, "demo/test customer")
+    if not paypal_client.auth.configured:
+        return _mock_invoice(state, amount, currency, "unconfigured credentials")
 
     invoice_number = str(meta.get("invoice_number") or f"INV-{state.case_id[-8:].upper()}")
     due_date = meta.get("due_date") or (datetime.now() - timedelta(days=max(1, int(meta.get("days_overdue", 1))))).date().isoformat()

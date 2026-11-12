@@ -57,21 +57,20 @@ def get_escalation_tone(rs: RecoveryState, attempt: int | None = None) -> tuple[
         if attempt <= 1:
             wa_msg = (
                 f"Dear Accounts Payable ({name}), a courtesy reminder that invoice {inv_num} "
-                f"({amount_str}, PO: {po_num}) is past due. Please settle using the secure "
-                f"PayPal invoice link. (Ref: #RNV-{ref_code})"
+                f"({amount_str}, PO: {po_num}) is past due. Settle securely via PayPal: "
+                f"{{payment_link}} (Ref: #RNV-{ref_code})"
             )
             email_urg = "b2b_gentle"
         elif attempt == 2:
             wa_msg = (
                 f"Attention Accounts Payable ({name}): invoice {inv_num} ({amount_str}) is "
-                f"overdue. Please provide a payment date or settle to avoid a vendor hold. "
-                f"(Ref: #RNV-{ref_code})"
+                f"overdue. Review and settle invoice: {{payment_link}} (Ref: #RNV-{ref_code})"
             )
             email_urg = "b2b_urgent"
         else:
             wa_msg = (
                 f"Final notice: commercial invoice {inv_num} ({amount_str}) remains unsettled. "
-                f"The account has been transferred to finance operations. (Ref: #RNV-{ref_code})"
+                f"Settle invoice: {{payment_link}} (Ref: #RNV-{ref_code})"
             )
             email_urg = "b2b_final"
         voice_msg = (
@@ -97,18 +96,18 @@ def get_escalation_tone(rs: RecoveryState, attempt: int | None = None) -> tuple[
         if attempt <= 1:
             wa_msg = (
                 f"Hi {name}, your payment of {amount_str} didn't go through due to a temporary "
-                f"bank issue. Your order is reserved. Tap the PayPal link to retry. "
-                f"(Ref: #RNV-{ref_code})"
+                f"bank issue. Your order is reserved. Retry securely here: "
+                f"{{payment_link}} (Ref: #RNV-{ref_code})"
             )
         elif attempt == 2:
             wa_msg = (
-                f"Urgent: {name}, your payment of {amount_str} remains pending. Please settle "
-                f"within 24 hours to avoid cancellation. (Ref: #RNV-{ref_code})"
+                f"Urgent: {name}, your payment of {amount_str} remains pending. Please complete "
+                f"your order within 24 hours: {{payment_link}} (Ref: #RNV-{ref_code})"
             )
         else:
             wa_msg = (
-                f"Final notice: {name}, this is our last reminder for {amount_str}. Your "
-                f"account has been scheduled for review. (Ref: #RNV-{ref_code})"
+                f"Final notice: {name}, this is our last reminder for {amount_str}. Review "
+                f"and settle order: {{payment_link}} (Ref: #RNV-{ref_code})"
             )
         voice_msg = (
             f"Hello {name}, this is Renvue support. Your payment of {amount_str} was interrupted "
@@ -124,18 +123,18 @@ def get_escalation_tone(rs: RecoveryState, attempt: int | None = None) -> tuple[
 
     if attempt <= 1:
         wa_msg = (
-            f"Hi {name}, your payment of {amount_str}{card_str} was declined. Tap the PayPal "
-            f"link to update your payment method or pay another way. (Ref: #RNV-{ref_code})"
+            f"Hi {name}, your payment of {amount_str}{card_str} was declined. Tap to update "
+            f"your payment method or pay another way: {{payment_link}} (Ref: #RNV-{ref_code})"
         )
     elif attempt == 2:
         wa_msg = (
             f"Urgent: {name}, your payment of {amount_str} is overdue. Please update your "
-            f"payment method today to avoid service suspension. (Ref: #RNV-{ref_code})"
+            f"payment method today: {{payment_link}} (Ref: #RNV-{ref_code})"
         )
     else:
         wa_msg = (
-            f"Final notice: {name}, outstanding payment of {amount_str} is unresolved. Your "
-            f"account has been transferred to support. (Ref: #RNV-{ref_code})"
+            f"Final notice: {name}, outstanding payment of {amount_str} is unresolved. Settle "
+            f"balance: {{payment_link}} (Ref: #RNV-{ref_code})"
         )
     voice_msg = (
         f"Hello {name}, this is Renvue support. Your payment of {amount_str} was declined. "

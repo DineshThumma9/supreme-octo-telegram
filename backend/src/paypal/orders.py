@@ -70,8 +70,8 @@ async def create_recovery_order(
     currency = (currency or state.currency or "USD").upper()
     email = (state.customer or {}).get("email", "")
 
-    if settings.demo_mode or not email or "@example.com" in email or email.startswith("test"):
-        return _mock_order(state, amount, currency, "demo/test customer")
+    if not paypal_client.auth.configured:
+        return _mock_order(state, amount, currency, "unconfigured credentials")
 
     description = {
         "abandoned_checkout": "Complete your Renvue order",

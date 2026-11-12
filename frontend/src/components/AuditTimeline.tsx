@@ -11,7 +11,72 @@ import {
   TimelineTitle,
 } from "@/components/reui/timeline"
 import { Bubble } from "@/components/ui/bubble"
-import { Calendar } from "lucide-react"
+import { Calendar, ExternalLink } from "lucide-react"
+
+function renderMessageWithLinks(text: string, fallbackUrl?: string | null) {
+  const urlMatch = text.match(/https?:\/\/[^\s]+/)
+  const targetUrl = urlMatch ? urlMatch[0] : fallbackUrl
+
+  if (!targetUrl) {
+    const urlRegex = /(https?:\/\/[^\s]+)/g
+    const parts = text.split(urlRegex)
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-emerald-400 hover:text-emerald-300 underline font-mono break-all inline-flex items-center gap-0.5 select-text font-medium cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span>{part}</span>
+            <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+          </a>
+        )
+      }
+      return <span key={i} className="select-text">{part}</span>
+    })
+  }
+
+  const pattern = /(https?:\/\/[^\s]+|\b(?:this\s+link|the\s+link|payment\s+link|invoice\s+link|checkout\s+link|link)\b)/gi
+  const parts = text.split(pattern)
+  return parts.map((part, i) => {
+    if (!part) return null
+    if (part.match(/https?:\/\/[^\s]+/i)) {
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-mono text-[11px] break-all inline-flex items-center gap-0.5 select-text font-medium cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span>{part}</span>
+          <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+        </a>
+      )
+    }
+    if (part.match(/^(?:this\s+link|the\s+link|payment\s+link|invoice\s+link|checkout\s+link|link)$/i)) {
+      return (
+        <a
+          key={i}
+          href={targetUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-400 hover:text-emerald-300 underline font-medium inline-flex items-center gap-0.5 select-text cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span>{part}</span>
+          <ExternalLink className="w-2.5 h-2.5 inline shrink-0 ml-0.5" />
+        </a>
+      )
+    }
+    return <span key={i} className="select-text">{part}</span>
+  })
+}
 
 const EVENT_STYLES: Record<string, { title: string; class: string }> = {
   payment_failed: { title: 'Payment failed', class: 'text-negative bg-negative/10 border-negative' },
@@ -88,11 +153,11 @@ export function AuditTimeline({
                     {e.message}
                   </Bubble>
                 ) : e.event_triggered === 'create_payment_link' ? (
-                  <div className="rounded-md border border-hairline bg-zinc-900 p-2 text-[10px] font-mono text-secondary break-all">
-                    {e.message}
+                  <div className="rounded-md border border-hairline bg-zinc-900 p-2 text-[10px] font-mono text-secondary break-all select-text">
+                    {renderMessageWithLinks(e.message)}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-muted leading-relaxed">{e.message}</p>
+                  <p className="text-[11px] text-muted leading-relaxed select-text">{renderMessageWithLinks(e.message)}</p>
                 )
               )}
 

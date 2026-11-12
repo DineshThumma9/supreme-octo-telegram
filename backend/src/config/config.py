@@ -108,7 +108,14 @@ class Settings(BaseSettings):
     )
     paypal_webhook_id: str = Field(default="", alias="PAYPAL_WEBHOOK_ID")
     paypal_webhook_ids: str = Field(default="", alias="PAYPAL_WEBHOOK_IDS")
-    paypal_business_email: str = Field(default="", alias="PAYPAL_EMAIL")
+    paypal_business_email: str = Field(
+        default="",
+        validation_alias=AliasChoices("PAYPAL_BUSINESS_EMAIL", "PAYPAL_EMAIL", "paypal_business_email"),
+    )
+    paypal_personal_email: str = Field(
+        default="",
+        validation_alias=AliasChoices("PAYPAL_PERSONAL_EMAIL", "paypal_personal_email"),
+    )
 
     eleven_api_key: str = Field(
         default="",
